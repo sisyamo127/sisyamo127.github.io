@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Welcome Message & Omikuji</title>
+  <title>Wedding Message & Omikuji</title>
   <style>
     body {
       font-family: 'Yu Mincho', 'Hiragino Mincho Pro', serif;
@@ -64,6 +64,20 @@
       line-height: 1.8;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
+    #omikujiAnimation {
+      display: none;
+      width: 100px;
+      height: 100px;
+      margin: 20px auto;
+      border: 8px solid #d1c4b2;
+      border-top: 8px solid #a67c52;
+      border-radius: 50%;
+      animation: spin 2s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
     footer {
       margin-top: 50px;
       font-size: 14px;
@@ -86,9 +100,11 @@
     <option value="gal">ギャル語風</option>
   </select><br>
   <button id="showButton" onclick="generateMessage()" disabled>メッセージを見る</button>
-  <button onclick="drawOmikuji()">おみくじを引く</button>
 
   <div id="card" class="message" style="display:none;"></div>
+
+  <button id="omikujiButton" onclick="drawOmikuji()" style="display:none;">おみくじを引く</button>
+  <div id="omikujiAnimation"></div>
   <div id="omikuji" class="omikuji" style="display:none;"></div>
 </div>
 
@@ -151,35 +167,20 @@
     const card = document.getElementById("card");
     card.innerHTML = `<strong>${name} 様</strong><br><br>${message}`;
     card.style.display = "block";
+    document.getElementById("omikujiButton").style.display = "inline-block";
   }
 
   function drawOmikuji() {
-    const fortunes = ['大吉', '中吉', '小吉', '吉', '末吉', '凶'];
-    const wishes = ['叶うでしょう', '時を待てば叶う', '慎重に進めば吉'];
-    const loves = ['良縁あり', '待てば吉', '無理は禁物'];
-    const healths = ['心身共に安泰', '無理せぬが吉', '休息大切'];
-    const works = ['順調', '努力次第', '困難も突破'];
-    const trips = ['吉日を選べ', '楽しい旅路に', '控えるべし'];
-    const moneys = ['上昇傾向', '節約が吉', '出費に注意'];
-    const advices = ['笑顔は福を呼ぶ', '日々感謝を忘れずに', '身の回りを整えるべし'];
+    document.getElementById("omikujiAnimation").style.display = "block";
+    document.getElementById("omikuji").style.display = "none";
 
-    const omikuji = `
-      【運勢】${random(fortunes)}<br>
-      【願望】${random(wishes)}<br>
-      【恋愛】${random(loves)}<br>
-      【健康】${random(healths)}<br>
-      【仕事】${random(works)}<br>
-      【旅行】${random(trips)}<br>
-      【金運】${random(moneys)}<br>
-      【一言】「${random(advices)}」
-    `;
-
-    document.getElementById("omikuji").innerHTML = omikuji;
-    document.getElementById("omikuji").style.display = "block";
-  }
-
-  function random(array) {
-    return array[Math.floor(Math.random() * array.length)];
+    setTimeout(() => {
+      document.getElementById("omikujiAnimation").style.display = "none";
+      const fortunes = ['大吉', '中吉', '小吉', '吉', '末吉', '凶'];
+      const result = `【運勢】${fortunes[Math.floor(Math.random() * fortunes.length)]}`;
+      document.getElementById("omikuji").innerHTML = result;
+      document.getElementById("omikuji").style.display = "block";
+    }, 3000); // 3秒ぐるぐる
   }
 </script>
 
