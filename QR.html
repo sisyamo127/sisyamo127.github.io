@@ -16,14 +16,11 @@
       align-items: center;
       min-height: 100vh;
       text-align: center;
-      overflow: hidden;
     }
     .container {
       max-width: 600px;
       width: 90%;
       padding: 20px;
-      position: relative;
-      z-index: 2;
     }
     h1 {
       font-size: 32px;
@@ -66,49 +63,15 @@
       text-align: left;
       line-height: 1.8;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-      opacity: 0;
-      transform: translateX(-100%);
-      transition: opacity 1.5s ease-in-out, transform 1s ease-out;
-      animation: sway 3s infinite alternate ease-in-out;
     }
-    .message.show {
-      opacity: 1;
-      transform: translateX(0);
-    }
-    @keyframes sway {
-      from { transform: rotate(-2deg); }
-      to { transform: rotate(2deg); }
-    }
-    .sparkle {
-      position: fixed;
-      width: 100vw;
-      height: 100vh;
-      pointer-events: none;
-      background: radial-gradient(circle, rgba(255,255,255,0.3) 10%, rgba(255,255,255,0) 50%);
-      mix-blend-mode: screen;
-      animation: sparkle 3s infinite alternate ease-in-out;
-    }
-    @keyframes sparkle {
-      from { opacity: 0.2; }
-      to { opacity: 0.6; }
-    }
-    .flower {
-      position: absolute;
-      width: 20px;
-      height: 20px;
-      background: pink;
-      border-radius: 50%;
-      animation: fall linear infinite;
-    }
-    @keyframes fall {
-      from { transform: translateY(-10vh) rotate(0); }
-      to { transform: translateY(100vh) rotate(360deg); }
+    footer {
+      margin-top: 50px;
+      font-size: 14px;
+      color: #888;
     }
   </style>
 </head>
 <body>
-
-<div class="sparkle"></div>
 
 <div class="container">
   <h1>Welcome to Our Wedding</h1>
@@ -120,15 +83,16 @@
     <option value="normal">普通口調</option>
     <option value="edo">江戸っ子口調</option>
     <option value="kansai">関西弁口調</option>
-    <option value="poet">詩人風</option>
-    <option value="baby">赤ちゃん言葉風</option>
     <option value="gal">ギャル語風</option>
-    <option value="dog">犬語</option>
   </select><br>
   <button id="showButton" onclick="generateMessage()" disabled>メッセージを見る</button>
 
-  <div id="card" class="message"></div>
+  <div id="card" class="message" style="display:none;"></div>
 </div>
+
+<footer>
+  Thank you for celebrating with us.
+</footer>
 
 <script>
   function checkSelection() {
@@ -138,21 +102,61 @@
 
   function generateMessage() {
     const name = document.getElementById("guestName").value.trim();
+    const tone = document.getElementById("toneSelect").value;
     if (!name) {
       alert("お名前を入力してください。");
       return;
     }
-    document.getElementById("card").innerHTML = `<strong>${name} 様</strong><br><br>特別なメッセージがここに入ります✨`;
-    document.getElementById("card").classList.add("show");
 
-    for (let i = 0; i < 30; i++) {
-      const flower = document.createElement("div");
-      flower.classList.add("flower");
-      flower.style.left = Math.random() * 100 + "vw";
-      flower.style.animationDuration = (Math.random() * 3 + 2) + "s";
-      document.body.appendChild(flower);
-      setTimeout(() => flower.remove(), 5000);
+    const fortunes = ['大吉', '中吉', '小吉', '吉', '末吉', '凶'];
+    const fortune = fortunes[Math.floor(Math.random() * fortunes.length)];
+
+    let message = "";
+
+    switch(tone) {
+      case "normal":
+        message = `
+          本日はご多用の中、私たちの結婚式にお越しいただき、誠にありがとうございます。<br><br>
+          おかげさまで、心温まるひとときを皆さまと過ごせることを大変嬉しく思っております。<br>
+          ささやかではございますが、どうぞごゆっくりお楽しみください。<br><br>
+          Yuki
+        `;
+        break;
+      case "edo":
+        message = `
+          今日はわざわざ足を運んでくださって、ありがとございやす！<br><br>
+          おかげさまで、皆さんと一緒に粋な時間を過ごせて、こちとら嬉しい限りでさぁ。<br>
+          どうぞ、気張らずゆったり楽しんでいっておくんなせぇ。<br><br>
+          Yuki
+        `;
+        break;
+      case "kansai":
+        message = `
+          今日は忙しい中、来てくれてホンマにありがとうな！<br><br>
+          みんなと一緒に、あったかい時間を過ごせてめっちゃ嬉しいわぁ。<br>
+          せっかくやし、ゆっくり楽しんでってや〜。<br><br>
+          Yuki
+        `;
+        break;
+      case "gal":
+        message = `
+          マジ今日来てくれて、ありがと〜！<br><br>
+          ほんっと嬉しすぎてエモすぎて泣きそ〜🥹💖<br>
+          最高なメンツで過ごせるとか、激アツじゃん？<br>
+          いっぱい食べて、飲んで、映え写真とか撮っちゃって盛り上がろ〜📸✨<br><br>
+          LOVE💋 Yuki
+        `;
+        break;
     }
+
+    const card = document.getElementById("card");
+    card.innerHTML = `
+      <strong>${name} 様</strong><br><br>
+      【本日のおみくじ】<br>
+      <strong>${fortune}</strong><br><br>
+      ${message}
+    `;
+    card.style.display = "block";
   }
 </script>
 
