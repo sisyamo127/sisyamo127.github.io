@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Welcome Message</title>
+  <title>Welcome Message & Omikuji</title>
   <style>
     body {
       font-family: 'Yu Mincho', 'Hiragino Mincho Pro', serif;
@@ -47,14 +47,14 @@
       color: #fff;
       border: none;
       border-radius: 5px;
-      margin-top: 10px;
+      margin: 10px;
       cursor: pointer;
     }
     button:disabled {
       background-color: #ccc;
       cursor: not-allowed;
     }
-    .message {
+    .message, .omikuji {
       margin-top: 30px;
       padding: 30px;
       border: 2px solid #e0d6c9;
@@ -86,8 +86,10 @@
     <option value="gal">ギャル語風</option>
   </select><br>
   <button id="showButton" onclick="generateMessage()" disabled>メッセージを見る</button>
+  <button onclick="drawOmikuji()">おみくじを引く</button>
 
   <div id="card" class="message" style="display:none;"></div>
+  <div id="omikuji" class="omikuji" style="display:none;"></div>
 </div>
 
 <footer>
@@ -107,9 +109,6 @@
       alert("お名前を入力してください。");
       return;
     }
-
-    const fortunes = ['大吉', '中吉', '小吉', '吉', '末吉', '凶'];
-    const fortune = fortunes[Math.floor(Math.random() * fortunes.length)];
 
     let message = "";
 
@@ -150,13 +149,37 @@
     }
 
     const card = document.getElementById("card");
-    card.innerHTML = `
-      <strong>${name} 様</strong><br><br>
-      【本日のおみくじ】<br>
-      <strong>${fortune}</strong><br><br>
-      ${message}
-    `;
+    card.innerHTML = `<strong>${name} 様</strong><br><br>${message}`;
     card.style.display = "block";
+  }
+
+  function drawOmikuji() {
+    const fortunes = ['大吉', '中吉', '小吉', '吉', '末吉', '凶'];
+    const wishes = ['叶うでしょう', '時を待てば叶う', '慎重に進めば吉'];
+    const loves = ['良縁あり', '待てば吉', '無理は禁物'];
+    const healths = ['心身共に安泰', '無理せぬが吉', '休息大切'];
+    const works = ['順調', '努力次第', '困難も突破'];
+    const trips = ['吉日を選べ', '楽しい旅路に', '控えるべし'];
+    const moneys = ['上昇傾向', '節約が吉', '出費に注意'];
+    const advices = ['笑顔は福を呼ぶ', '日々感謝を忘れずに', '身の回りを整えるべし'];
+
+    const omikuji = `
+      【運勢】${random(fortunes)}<br>
+      【願望】${random(wishes)}<br>
+      【恋愛】${random(loves)}<br>
+      【健康】${random(healths)}<br>
+      【仕事】${random(works)}<br>
+      【旅行】${random(trips)}<br>
+      【金運】${random(moneys)}<br>
+      【一言】「${random(advices)}」
+    `;
+
+    document.getElementById("omikuji").innerHTML = omikuji;
+    document.getElementById("omikuji").style.display = "block";
+  }
+
+  function random(array) {
+    return array[Math.floor(Math.random() * array.length)];
   }
 </script>
 
