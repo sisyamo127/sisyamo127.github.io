@@ -2,24 +2,39 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>ウェルカムメッセージ</title>
+  <title>Welcome Message</title>
   <style>
     body {
       font-family: 'Yu Mincho', 'Hiragino Mincho Pro', serif;
       background-color: #f9f5f0;
       color: #4a3b30;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
       text-align: center;
-      padding: 50px;
+    }
+    .container {
+      max-width: 600px;
+      width: 90%;
+      padding: 20px;
     }
     h1 {
       font-size: 32px;
-      margin-bottom: 30px;
+      margin-bottom: 20px;
       color: #a67c52;
+    }
+    p {
+      margin-bottom: 20px;
+      font-size: 18px;
     }
     input {
       padding: 10px;
       font-size: 18px;
-      width: 60%;
+      width: 70%;
       max-width: 300px;
       border: 1px solid #d1c4b2;
       border-radius: 5px;
@@ -38,14 +53,12 @@
       background-color: #8c6744;
     }
     .message {
-      margin-top: 40px;
+      margin-top: 30px;
       padding: 30px;
       border: 2px solid #e0d6c9;
       border-radius: 10px;
       background-color: #fffdf9;
-      display: inline-block;
       text-align: left;
-      max-width: 600px;
       line-height: 1.8;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
@@ -58,13 +71,15 @@
 </head>
 <body>
 
-<h1>Welcome Message</h1>
+<div class="container">
+  <h1>Welcome to Our Wedding</h1>
 
-<p>お名前を入力してください</p>
-<input type="text" id="guestName" placeholder="例：山田太郎">
-<button onclick="generateMessage()">表示</button>
+  <p>大切なあなたのお名前をお聞かせください</p>
+  <input type="text" id="guestName" placeholder="お名前をご入力ください">
+  <button onclick="generateMessage()">メッセージを見る</button>
 
-<div id="card" class="message" style="display:none;"></div>
+  <div id="card" class="message" style="display:none;"></div>
+</div>
 
 <footer>
   Thank you for celebrating with us.
