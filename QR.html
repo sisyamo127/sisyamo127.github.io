@@ -31,9 +31,10 @@
       margin-bottom: 20px;
       font-size: 18px;
     }
-    input {
+    select, input {
       padding: 10px;
       font-size: 18px;
+      margin-bottom: 10px;
       width: 70%;
       max-width: 300px;
       border: 1px solid #d1c4b2;
@@ -46,11 +47,12 @@
       color: #fff;
       border: none;
       border-radius: 5px;
-      margin-left: 10px;
+      margin-top: 10px;
       cursor: pointer;
     }
-    button:hover {
-      background-color: #8c6744;
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
     }
     .message {
       margin-top: 30px;
@@ -74,9 +76,15 @@
 <div class="container">
   <h1>Welcome to Our Wedding</h1>
 
-  <p>大切なあなたのお名前をお聞かせください</p>
-  <input type="text" id="guestName" placeholder="お名前をご入力ください">
-  <button onclick="generateMessage()">メッセージを見る</button>
+  <p>お名前とお好きな口調をお選びください</p>
+  <input type="text" id="guestName" placeholder="お名前をご入力ください"><br>
+  <select id="toneSelect" onchange="checkSelection()">
+    <option value="">口調を選択してください</option>
+    <option value="normal">普通口調</option>
+    <option value="edo">江戸っ子口調</option>
+    <option value="kansai">関西弁口調</option>
+  </select><br>
+  <button id="showButton" onclick="generateMessage()" disabled>メッセージを見る</button>
 
   <div id="card" class="message" style="display:none;"></div>
 </div>
@@ -86,20 +94,49 @@
 </footer>
 
 <script>
+  function checkSelection() {
+    const tone = document.getElementById("toneSelect").value;
+    document.getElementById("showButton").disabled = (tone === "");
+  }
+
   function generateMessage() {
     const name = document.getElementById("guestName").value.trim();
+    const tone = document.getElementById("toneSelect").value;
     if (!name) {
       alert("お名前を入力してください。");
       return;
     }
+    let message = "";
+
+    switch(tone) {
+      case "normal":
+        message = `
+          本日はご多用の中、私たちの結婚式にお越しいただき、誠にありがとうございます。<br><br>
+          おかげさまで、心温まるひとときを皆さまと過ごせることを大変嬉しく思っております。<br>
+          ささやかではございますが、どうぞごゆっくりお楽しみください。<br><br>
+          Yuki
+        `;
+        break;
+      case "edo":
+        message = `
+          今日はわざわざ足を運んでくださって、ありがとございやす！<br><br>
+          おかげさまで、皆さんと一緒に粋な時間を過ごせて、こちとら嬉しい限りでさぁ。<br>
+          どうぞ、気張らずゆったり楽しんでいっておくんなせぇ。<br><br>
+          Yuki
+        `;
+        break;
+      case "kansai":
+        message = `
+          今日は忙しい中、来てくれてホンマにありがとうな！<br><br>
+          みんなと一緒に、あったかい時間を過ごせてめっちゃ嬉しいわぁ。<br>
+          せっかくやし、ゆっくり楽しんでってや〜。<br><br>
+          Yuki
+        `;
+        break;
+    }
+
     const card = document.getElementById("card");
-    card.innerHTML = `
-      <strong>${name} 様</strong><br><br>
-      本日はご多用の中、私たちの結婚式にお越しいただき、誠にありがとうございます。<br><br>
-      おかげさまで、心温まるひとときを皆さまと過ごせることを大変嬉しく思っております。<br>
-      ささやかではございますが、どうぞごゆっくりお楽しみください。<br><br>
-      Yuki
-    `;
+    card.innerHTML = `<strong>${name} 様</strong><br><br>${message}`;
     card.style.display = "block";
   }
 </script>
