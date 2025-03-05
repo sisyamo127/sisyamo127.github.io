@@ -83,6 +83,10 @@
     <option value="normal">普通口調</option>
     <option value="edo">江戸っ子口調</option>
     <option value="kansai">関西弁口調</option>
+    <option value="poet">詩人風</option>
+    <option value="baby">赤ちゃん言葉風</option>
+    <option value="gal">ギャル語風</option>
+    <option value="dog">犬語</option>
   </select><br>
   <button id="showButton" onclick="generateMessage()" disabled>メッセージを見る</button>
 
@@ -131,6 +135,41 @@
           みんなと一緒に、あったかい時間を過ごせてめっちゃ嬉しいわぁ。<br>
           せっかくやし、ゆっくり楽しんでってや〜。<br><br>
           Yuki
+        `;
+        break;
+      case "poet":
+        message = `
+          ひとひらの風が運んでくれた、あなたとのご縁。<br><br>
+          本日、この佳き日に共に過ごせること、心より感謝申し上げます。<br>
+          静かに揺れるキャンドルの灯のように、温かな時が、どうかあなたの心にも届きますように。<br><br>
+          Yuki
+        `;
+        break;
+      case "baby":
+        message = `
+          きょうは あそびにきてくれて ありがとでちゅ♡<br><br>
+          ぽかぽかの たのしいじかんに なったでちゅよ〜〜<br>
+          ゆっくりしてってね〜 いっぱい たべて、いっぱい わらってね♡<br><br>
+          ばぶばぶ Yuki
+        `;
+        break;
+      case "gal":
+        message = `
+          マジ今日来てくれて、ありがと〜！<br><br>
+          ほんっと嬉しすぎてエモすぎて泣きそ〜🥹💖<br>
+          最高なメンツで過ごせるとか、激アツじゃん？<br>
+          いっぱい食べて、飲んで、映え写真とか撮っちゃって盛り上がろ〜📸✨<br><br>
+          LOVE💋 Yuki
+        `;
+        break;
+      case "dog":
+        message = `
+          ワンワン！<br>
+          ワンワンワン、ワンワンしてくれてありがとワン！<br><br>
+          ワンワンで、ワンワンなじかんをすごせて<br>
+          ワンワンうれしいワン🐾<br><br>
+          ワンワンしてってワン！<br><br>
+          Yukiワン
         `;
         break;
     }
