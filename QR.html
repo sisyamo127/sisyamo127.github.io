@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>結婚式メッセージカード</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    .message { margin-top: 20px; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+  </style>
+</head>
+<body>
+
+<h1>メッセージカード作成</h1>
+
+<label for="guestName">お名前を入力してください：</label>
+<input type="text" id="guestName" placeholder="例：山田太郎">
+<button onclick="generateMessage()">表示</button>
+
+<div id="card" class="message" style="display:none;"></div>
+
+<script>
+  function generateMessage() {
+    const name = document.getElementById("guestName").value;
+    const card = document.getElementById("card");
+    card.innerHTML = `
+      ${name} 様<br><br>
+      本日はご多用の中、私たちの結婚式にお越しいただき、誠にありがとうございます。<br><br>
+      おかげさまで、心温まるひとときを皆さまと過ごせることを大変嬉しく思っております。<br>
+      ささやかではございますが、どうぞごゆっくりお楽しみください。<br><br>
+      △△ & ▽▽
+    `;
+    card.style.display = "block";
+  }
+</script>
+
+</body>
+</html>
