@@ -102,7 +102,7 @@
 </footer>
 
 <script>
-  async function fetchCSV() {
+ async function fetchCSV() {
     const fullName = document.getElementById("fullName").value.trim();
     const password = document.getElementById("password").value.trim();
 
@@ -149,45 +149,19 @@
         document.getElementById("card").innerHTML = `<strong>${fullName} 様</strong><br><br>${dataMap[fullName].message}`;
         document.getElementById("card").style.display = "block";
 
-        // 「林昂佑」の場合のみBMI計算ソフトを表示
+        // 「林昂佑」の場合のみBMIページへのリンクを表示
+        const bmiButton = document.getElementById("bmiButton");
         if (fullName === "林昂佑") {
-            document.getElementById("bmiCalculator").style.display = "block";
+            bmiButton.style.display = "block";
         } else {
-            document.getElementById("bmiCalculator").style.display = "none";
+            bmiButton.style.display = "none";
         }
 
     } catch (error) {
         console.error("CSVの読み込みに失敗しました:", error);
         alert("データを読み込めませんでした。");
     }
-  }
-
-  function calculateBMI() {
-    const weight = parseFloat(document.getElementById("weight").value);
-    const height = parseFloat(document.getElementById("height").value) / 100; // cm → m
-
-    if (!weight || !height || height <= 0) {
-        document.getElementById("bmiResult").innerText = "正しい数値を入力してください。";
-        return;
-    }
-
-    const bmi = weight / (height * height);
-    let status = "";
-
-    if (bmi < 18.5) {
-        status = "低体重（痩せ型）";
-    } else if (bmi < 25) {
-        status = "標準体重";
-    } else if (bmi < 30) {
-        status = "肥満（1度）";
-    } else if (bmi < 35) {
-        status = "肥満（2度）";
-    } else {
-        status = "高度肥満";
-    }
-
-    document.getElementById("bmiResult").innerHTML = `あなたのBMIは <strong>${bmi.toFixed(2)}</strong> です。<br>判定: ${status}`;
-  }
+}
 </script>
 
 </body>
