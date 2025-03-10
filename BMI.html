@@ -21,24 +21,24 @@
       max-width: 600px;
       width: 90%;
       padding: 20px;
+      text-align: center;
     }
     input {
-      padding: 10px;
-      font-size: 18px;
-      margin-bottom: 10px;
-      width: 70%;
-      max-width: 300px;
-      border: 1px solid #d1c4b2;
-      border-radius: 5px;
+      padding: 12px;
+      font-size: 20px;
+      margin-bottom: 15px;
+      width: 80%;
+      max-width: 350px;
+      border: 2px solid #d1c4b2;
+      border-radius: 8px;
     }
     button {
-      padding: 10px 20px;
-      font-size: 18px;
+      padding: 12px 20px;
+      font-size: 20px;
       background-color: #a67c52;
       color: #fff;
       border: none;
-      border-radius: 5px;
-      margin-top: 10px;
+      border-radius: 8px;
       cursor: pointer;
     }
     .result {
@@ -48,6 +48,7 @@
       border-radius: 10px;
       background-color: #fffdf9;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+      text-align: center;
     }
   </style>
 </head>
@@ -72,19 +73,10 @@
     }
 
     const bmi = weight / (height * height);
-    let status = "";
-
-    if (bmi < 18.5) {
-        status = "低体重（痩せ型）";
-    } else if (bmi < 25) {
-        status = "標準体重";
-    } else if (bmi < 30) {
-        status = "肥満（1度）";
-    } else if (bmi < 35) {
-        status = "肥満（2度）";
-    } else {
-        status = "高度肥満";
-    }
+    const status = bmi < 18.5 ? "低体重（痩せ型）" :
+                  bmi < 25 ? "標準体重" :
+                  bmi < 30 ? "肥満（1度）" :
+                  bmi < 35 ? "肥満（2度）" : "高度肥満";
 
     document.getElementById("bmiResult").innerHTML = `あなたのBMIは <strong>${bmi.toFixed(2)}</strong> です。<br>判定: ${status}`;
   }
