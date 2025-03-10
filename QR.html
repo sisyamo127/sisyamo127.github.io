@@ -76,9 +76,8 @@
 <div class="container">
   <h1>Welcome to Our Wedding</h1>
 
-  <p>苗字・名前（ひらがなのみ）とパスワードを入力してください</p>
-  <input type="text" id="lastName" placeholder="苗字をご入力ください（ひらがな）" oninput="filterHiragana(this)"><br>
-  <input type="text" id="firstName" placeholder="名前をご入力ください（ひらがな）" oninput="filterHiragana(this)"><br>
+  <p>お名前（ひらがなのみ）とパスワードを入力してください</p>
+  <input type="text" id="fullName" placeholder="お名前をご入力ください（ひらがな）" oninput="filterHiragana(this)"><br>
   <input type="password" id="password" placeholder="パスワードを入力してください"><br>
   <button id="showButton" onclick="fetchCSV()">メッセージを見る</button>
 
@@ -95,12 +94,11 @@
   }
 
   async function fetchCSV() {
-    const lastName = document.getElementById("lastName").value.trim();
-    const firstName = document.getElementById("firstName").value.trim();
+    const fullName = document.getElementById("fullName").value.trim();
     const password = document.getElementById("password").value.trim();
 
-    if (!lastName || !firstName || !password) {
-      alert("苗字・名前・パスワードを入力してください。");
+    if (!fullName || !password) {
+      alert("お名前とパスワードを入力してください。");
       return;
     }
 
@@ -116,15 +114,14 @@
         rows.forEach(row => {
             const cols = row.split(",");
             if (cols.length >= 4) {
-                const csvLastName = cols[0].trim();
-                const csvFirstName = cols[1].trim();
+                const csvFullName = cols[0].trim() + " " + cols[1].trim(); // 苗字＋名前を1つに
                 const csvMessage = cols[2].trim();
                 const csvPassword = cols[3].trim();
 
-                if (csvLastName === lastName && csvFirstName === firstName) {
+                if (csvFullName === fullName) {
                     found = true;
                     if (csvPassword === password) {
-                        document.getElementById("card").innerHTML = `<strong>${csvLastName} ${csvFirstName} 様</strong><br><br>${csvMessage}`;
+                        document.getElementById("card").innerHTML = `<strong>${csvFullName} 様</strong><br><br>${csvMessage}`;
                         document.getElementById("card").style.display = "block";
                         correctPassword = true;
                     }
