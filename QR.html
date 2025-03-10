@@ -102,33 +102,39 @@
         // GitHubのCSVを取得
         const response = await fetch("https://sisyamo127.github.io/data.csv");
         const text = await response.text();
-        const rows = text.split("\n").slice(1); // 1行目（タイトル）を除く
+        console.log("取得したCSVデータ:\n", text); // 🔹 デバッグ用に出力
 
-        // 🔹 データをオブジェクト形式（名前 → 情報）に変換
+        const rows = text.split("\n").slice(1); // 1行目（タイトル）を除く
+        console.log("処理するデータ行:", rows); // 🔹 デバッグ用に出力
+
+        // データをオブジェクト形式に変換
         const dataMap = {};
         rows.forEach(row => {
             const cols = row.split(",");
+            console.log("処理中の行:", cols); // 🔹 デバッグ用に出力
             if (cols.length >= 3) {
-                const csvFullName = cols[0].trim(); // 1列目: 名前
-                const csvMessage = cols[1].trim();  // 2列目: メッセージ
-                const csvPassword = cols[2].trim(); // 3列目: パスワード
+                const csvFullName = cols[0].trim();
+                const csvMessage = cols[1].trim();
+                const csvPassword = cols[2].trim();
                 dataMap[csvFullName] = { message: csvMessage, password: csvPassword };
             }
         });
 
-        // 🔹 名前が存在するか確認
+        console.log("データマップ:", dataMap); // 🔹 デバッグ用に出力
+
+        // 名前が存在するか確認
         if (!dataMap[fullName]) {
             alert("名前が見つかりません。");
             return;
         }
 
-        // 🔹 パスワードチェック
+        // パスワードチェック
         if (dataMap[fullName].password !== password) {
             alert("パスワードが違います。");
             return;
         }
 
-        // 🔹 メッセージを表示
+        // メッセージを表示
         document.getElementById("card").innerHTML = `<strong>${fullName} 様</strong><br><br>${dataMap[fullName].message}`;
         document.getElementById("card").style.display = "block";
 
