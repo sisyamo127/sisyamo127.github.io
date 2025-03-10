@@ -111,8 +111,8 @@
             const cols = row.split(",");
             if (cols.length >= 3) {
                 const csvFullName = cols[0].trim(); // 名前（1列目）
+                const csvMessage = cols[1].trim(); // メッセージ（2列目）
                 const csvPassword = cols[2].trim(); // パスワード（3列目）
-                const csvMessage = cols.length > 3 ? cols[3].trim() : ""; // メッセージ（4列目）
 
                 if (csvFullName === fullName) {
                     found = true;
