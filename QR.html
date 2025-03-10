@@ -105,39 +105,42 @@
     }
 
     try {
-      const response = await fetch("https://raw.githubusercontent.com/sisyamo127/your-repo/main/data.csv");
-      const text = await response.text();
-      const rows = text.split("\n").slice(1); // 1行目（タイトル）を除く
+        // GitHubのCSVを読み込む
+        const response = await fetch("https://sisyamo127.github.io/data.csv");
+        const text = await response.text();
+        const rows = text.split("\n").slice(1); // 1行目（タイトル）を除く
 
-      let found = false;
-      rows.forEach(row => {
-        const cols = row.split(",");
-        if (cols.length >= 4) {
-          const csvLastName = cols[0].trim();
-          const csvFirstName = cols[1].trim();
-          const csvMessage = cols[2].trim();
-          const csvPassword = cols[3].trim();
+        let found = false;
+        let correctPassword = false;
 
-          if (csvLastName === lastName && csvFirstName === firstName) {
-            if (csvPassword === password) {
-              document.getElementById("card").innerHTML = `<strong>${csvLastName} ${csvFirstName} 様</strong><br><br>${csvMessage}`;
-              document.getElementById("card").style.display = "block";
-              found = true;
-            } else {
-              alert("パスワードが違います。");
-              found = true;
+        rows.forEach(row => {
+            const cols = row.split(",");
+            if (cols.length >= 4) {
+                const csvLastName = cols[0].trim();
+                const csvFirstName = cols[1].trim();
+                const csvMessage = cols[2].trim();
+                const csvPassword = cols[3].trim();
+
+                if (csvLastName === lastName && csvFirstName === firstName) {
+                    found = true;
+                    if (csvPassword === password) {
+                        document.getElementById("card").innerHTML = `<strong>${csvLastName} ${csvFirstName} 様</strong><br><br>${csvMessage}`;
+                        document.getElementById("card").style.display = "block";
+                        correctPassword = true;
+                    }
+                }
             }
-          }
-        }
-      });
+        });
 
-      if (!found) {
-        alert("名前が見つかりません。");
-      }
+        if (!found) {
+            alert("名前が見つかりません。");
+        } else if (!correctPassword) {
+            alert("パスワードが違います。");
+        }
 
     } catch (error) {
-      console.error("CSVの読み込みに失敗しました:", error);
-      alert("データを読み込めませんでした。");
+        console.error("CSVの読み込みに失敗しました:", error);
+        alert("データを読み込めませんでした。");
     }
   }
 </script>
