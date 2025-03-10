@@ -119,7 +119,7 @@
                 const csvPassword = cols[2].trim();
 
                 // 🔹 `{name}` を `fullName 様` に置換
-                csvMessage = csvMessage.replace(/\{\{name\}\}/g, `${csvFullName} 様`);
+                csvMessage = csvMessage.replace(/\{\{name\}\}/g, `${csvFullName} `);
 
                 dataMap[csvFullName] = { message: csvMessage, password: csvPassword };
             }
