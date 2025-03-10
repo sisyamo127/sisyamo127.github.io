@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>BMI 計算</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"> <!-- 🔹 スマホ対応 -->
   <style>
     body {
       font-family: 'Yu Mincho', 'Hiragino Mincho Pro', serif;
@@ -16,6 +17,7 @@
       align-items: center;
       min-height: 100vh;
       text-align: center;
+      font-size: 18px; /* 🔹 フォントサイズUP */
     }
     .container {
       max-width: 600px;
@@ -24,22 +26,23 @@
       text-align: center;
     }
     input {
-      padding: 12px;
+      padding: 14px; /* 🔹 タップしやすく */
       font-size: 20px;
-      margin-bottom: 15px;
-      width: 80%;
-      max-width: 350px;
+      width: 90%; /* 🔹 画面幅に適応 */
+      max-width: 400px;
       border: 2px solid #d1c4b2;
       border-radius: 8px;
     }
     button {
-      padding: 12px 20px;
-      font-size: 20px;
+      padding: 14px 24px; /* 🔹 ボタンも大きく */
+      font-size: 22px;
       background-color: #a67c52;
       color: #fff;
       border: none;
       border-radius: 8px;
       cursor: pointer;
+      width: 90%;
+      max-width: 400px;
     }
     .result {
       margin-top: 20px;
@@ -49,6 +52,24 @@
       background-color: #fffdf9;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
       text-align: center;
+    }
+
+    /* 🔹 スマホ向け最適化 */
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 32px; /* 🔹 スマホならタイトルをさらに大きく */
+      }
+      p {
+        font-size: 22px;
+      }
+      input {
+        font-size: 22px;
+        padding: 16px;
+      }
+      button {
+        font-size: 24px;
+        padding: 16px 28px;
+      }
     }
   </style>
 </head>
@@ -78,7 +99,10 @@
                   bmi < 30 ? "肥満（1度）" :
                   bmi < 35 ? "肥満（2度）" : "高度肥満";
 
-    document.getElementById("bmiResult").innerHTML = `あなたのBMIは <strong>${bmi.toFixed(2)}</strong> です。<br>判定: ${status}`;
+    document.getElementById("bmiResult").innerHTML = `
+      あなたのBMIは <strong>${bmi.toFixed(2)}</strong> です。<br>
+      判定: ${status}
+    `;
   }
 </script>
 
