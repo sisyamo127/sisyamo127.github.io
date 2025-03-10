@@ -1,1 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>BMI 計算</title>
+  <style>
+    body {
+      font-family: 'Yu Mincho', 'Hiragino Mincho Pro', serif;
+      background-color: #f9f5f0;
+      color: #4a3b30;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      text-align: center;
+    }
+    .container {
+      max-width: 600px;
+      width: 90%;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 32px;
+      margin-bottom: 20px;
+      color: #a67c52;
+    }
+    input {
+      padding: 10px;
+      font-size: 18px;
+      margin-bottom: 10px;
+      width: 70%;
+      max-width: 300px;
+      border: 1px solid #d1c4b2;
+      border-radius: 5px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 18px;
+      background-color: #a67c52;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      margin-top: 10px;
+      cursor: pointer;
+    }
+    .result {
+      margin-top: 20px;
+      padding: 20px;
+      border: 2px solid #e0d6c9;
+      border-radius: 10px;
+      background-color: #fffdf9;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>BMI 計算</h1>
+  <p>体重 (kg): <input type="number" id="weight" placeholder="例: 70"></p>
+  <p>身長 (cm): <input type="number" id="height" placeholder="例: 175"></p>
+  <button onclick="calculateBMI()">計算</button>
+  <div id="bmiResult" class="result"></div>
+</div>
+
+<script>
+  function calculateBMI() {
+    const weight = parseFloat(document.getElementById("weight").value);
+    const height = parseFloat(document.getElementById("height").value) / 100; // cm → m
+
+    if (!weight || !height || height <= 0) {
+        document.getElementById("bmiResult").innerText = "正しい数値を入力してください。";
+        return;
+    }
+
+    const bmi = weight / (height * height);
+    let status = "";
+
+    if (bmi < 18.5) {
+        status = "低体重（痩せ型）";
+    } else if (bmi < 25) {
+        status = "標準体重";
+    } else if (bmi < 30) {
+        status = "肥満（1度）";
+    } else if (bmi < 35) {
+        status = "肥満（2度）";
+    } else {
+        status = "高度肥満";
+    }
+
+    document.getElementById("bmiResult").innerHTML = `あなたのBMIは <strong>${bmi.toFixed(2)}</strong> です。<br>判定: ${status}`;
+  }
+</script>
+
+</body>
+</html>
 
