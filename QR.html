@@ -50,15 +50,17 @@
 <div class="container">
   <h1>Welcome to Our Wedding</h1>
 
-  <p>お名前（完全一致）とパスワードを入力してください</p>
-  <input type="text" id="fullName" placeholder="お名前をご入力ください"><br>
-  <input type="password" id="password" placeholder="パスワードを入力してください"><br>
-  <button id="showButton" onclick="fetchCSV()">メッセージを見る</button>
+  <div id="inputForm">  <!-- 🔹 ここを非表示にする -->
+    <p>お名前（完全一致）とパスワードを入力してください</p>
+    <input type="text" id="fullName" placeholder="お名前をご入力ください"><br>
+    <input type="password" id="password" placeholder="パスワードを入力してください"><br>
+    <button id="showButton" onclick="fetchCSV()">メッセージを見る</button>
+  </div>
 
   <div id="card" class="message" style="display:none;"></div>
 
   <!-- 「林昂佑」の場合のみボタンを表示 -->
-  <button id="bmiButton" class="bmi-button" onclick="location.href='https://sisyamo127.github.io/BMI.html'">BMIを計算する</button>
+  <button id="bmiButton" class="bmi-button" onclick="location.href='https://sisyamo127.github.io/BMI.html'" style="display:none;">BMIを計算する</button>
 </div>
 
 <footer>
