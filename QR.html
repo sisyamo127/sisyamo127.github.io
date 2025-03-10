@@ -97,17 +97,18 @@
             }
         });
 
-        // 名前が存在するか確認
         if (!dataMap[fullName]) {
             alert("名前が見つかりません。");
             return;
         }
 
-        // パスワードチェック
         if (dataMap[fullName].password !== password) {
             alert("パスワードが違います。");
             return;
         }
+
+        // 入力フォームを非表示
+        document.getElementById("inputForm").style.display = "none";
 
         // メッセージを表示
         document.getElementById("card").innerHTML = `<strong>${fullName} 様</strong><br><br>${dataMap[fullName].message}`;
@@ -115,11 +116,7 @@
 
         // 「林昂佑」の場合のみBMIページへのリンクを表示
         const bmiButton = document.getElementById("bmiButton");
-        if (fullName === "林昂佑") {
-            bmiButton.style.display = "block";
-        } else {
-            bmiButton.style.display = "none";
-        }
+        bmiButton.style.display = (fullName === "林昂佑") ? "block" : "none";
 
     } catch (error) {
         console.error("CSVの読み込みに失敗しました:", error);
