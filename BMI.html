@@ -22,11 +22,6 @@
       width: 90%;
       padding: 20px;
     }
-    h1 {
-      font-size: 32px;
-      margin-bottom: 20px;
-      color: #a67c52;
-    }
     input {
       padding: 10px;
       font-size: 18px;
@@ -60,8 +55,8 @@
 
 <div class="container">
   <h1>BMI 計算</h1>
-  <p>体重 (kg): <input type="number" id="weight" placeholder="例: 70"></p>
-  <p>身長 (cm): <input type="number" id="height" placeholder="例: 175"></p>
+  <p>体重 (kg): <input type="number" id="weight"></p>
+  <p>身長 (cm): <input type="number" id="height"></p>
   <button onclick="calculateBMI()">計算</button>
   <div id="bmiResult" class="result"></div>
 </div>
@@ -69,7 +64,7 @@
 <script>
   function calculateBMI() {
     const weight = parseFloat(document.getElementById("weight").value);
-    const height = parseFloat(document.getElementById("height").value) / 100; // cm → m
+    const height = parseFloat(document.getElementById("height").value) / 100;
 
     if (!weight || !height || height <= 0) {
         document.getElementById("bmiResult").innerText = "正しい数値を入力してください。";
@@ -97,4 +92,3 @@
 
 </body>
 </html>
-
