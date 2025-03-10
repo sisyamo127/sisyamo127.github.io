@@ -32,15 +32,33 @@
       line-height: 1.8;
       box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
-    .bmi-button {
-      display: none;
-      margin-top: 20px;
-      padding: 10px 20px;
-      font-size: 18px;
+    input {
+      padding: 12px;
+      font-size: 20px;
+      margin-bottom: 15px;
+      width: 80%;
+      max-width: 350px;
+      border: 2px solid #d1c4b2;
+      border-radius: 8px;
+    }
+    button {
+      padding: 12px 20px;
+      font-size: 20px;
       background-color: #a67c52;
       color: #fff;
       border: none;
-      border-radius: 5px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .bmi-button {
+      display: none;
+      margin-top: 20px;
+      padding: 12px 20px;
+      font-size: 20px;
+      background-color: #d9534f;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
       cursor: pointer;
     }
   </style>
@@ -116,7 +134,6 @@
         document.getElementById("card").innerHTML = `<strong>${fullName} 様</strong><br><br>${dataMap[fullName].message}`;
         document.getElementById("card").style.display = "block";
 
-        // 「林昂佑」の場合のみBMIページへのリンクを表示
         const bmiButton = document.getElementById("bmiButton");
         bmiButton.style.display = (fullName === "林昂佑") ? "block" : "none";
 
