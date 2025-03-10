@@ -76,8 +76,8 @@
 <div class="container">
   <h1>Welcome to Our Wedding</h1>
 
-  <p>お名前（ひらがなのみ）とパスワードを入力してください</p>
-  <input type="text" id="fullName" placeholder="お名前をご入力ください（ひらがな）" oninput="filterHiragana(this)"><br>
+  <p>お名前（完全一致）とパスワードを入力してください</p>
+  <input type="text" id="fullName" placeholder="お名前をご入力ください"><br>
   <input type="password" id="password" placeholder="パスワードを入力してください"><br>
   <button id="showButton" onclick="fetchCSV()">メッセージを見る</button>
 
@@ -89,10 +89,6 @@
 </footer>
 
 <script>
-  function filterHiragana(input) {
-    input.value = input.value.replace(/[^ぁ-んー]/g, ''); // ひらがな以外を削除
-  }
-
   async function fetchCSV() {
     const fullName = document.getElementById("fullName").value.trim();
     const password = document.getElementById("password").value.trim();
@@ -113,10 +109,10 @@
 
         rows.forEach(row => {
             const cols = row.split(",");
-            if (cols.length >= 4) {
-                const csvFullName = cols[0].trim() + " " + cols[1].trim(); // 苗字＋名前を1つに
-                const csvMessage = cols[2].trim();
-                const csvPassword = cols[3].trim();
+            if (cols.length >= 3) {
+                const csvFullName = cols[0].trim(); // 名前（1列目）
+                const csvPassword = cols[2].trim(); // パスワード（3列目）
+                const csvMessage = cols.length > 3 ? cols[3].trim() : ""; // メッセージ（4列目）
 
                 if (csvFullName === fullName) {
                     found = true;
