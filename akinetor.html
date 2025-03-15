@@ -25,6 +25,7 @@
       background: rgba(0, 0, 0, 0.6);
       border-radius: 15px;
       box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+      position: relative;
     }
     h1 {
       font-size: 28px;
@@ -34,6 +35,11 @@
       font-size: 22px;
       margin-bottom: 20px;
     }
+    .btn-container {
+      display: flex;
+      justify-content: center;
+      gap: 15px; /* ボタン間の間隔 */
+    }
     .btn {
       padding: 14px 24px;
       font-size: 20px;
@@ -42,25 +48,47 @@
       border: none;
       border-radius: 10px;
       cursor: pointer;
-      width: 90%;
-      max-width: 300px;
-      margin: 10px;
+      width: 40%;
+      max-width: 200px;
       transition: transform 0.2s ease, background-color 0.2s;
     }
     .btn:hover {
       background-color: #ffdb4d;
       transform: scale(1.05);
     }
+    .arab-image {
+      position: absolute;
+      top: -50px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100px;
+      height: auto;
+      border-radius: 50%;
+      border: 3px solid white;
+    }
+
+    /* スマホ対応 */
+    @media (max-width: 480px) {
+      .btn-container {
+        flex-direction: column;
+      }
+      .btn {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
 
 <div class="container">
+  <img src="31456320_m.jpg" alt="アラブ人の代わりの画像" class="arab-image">
   <h1>アキネーター</h1>
   <p class="question" id="question">○○さんは丸紅情報システムズに所属している？</p>
 
-  <button class="btn" onclick="nextQuestion()">はい</button>
-  <button class="btn" onclick="nextQuestion()">部分的にそう</button>
+  <div class="btn-container">
+    <button class="btn" onclick="nextQuestion()">はい</button>
+    <button class="btn" onclick="nextQuestion()">部分的にそう</button>
+  </div>
 </div>
 
 <script>
@@ -80,4 +108,3 @@
 
 </body>
 </html>
-
