@@ -90,7 +90,7 @@
 
 <div class="container">
   <h1>あなたは誰？</h1>
-  <p class="question" id="question">○○さんは丸紅情報システムズに所属している？</p>
+  <p class="question" id="question">丸紅情報システムズに所属している？</p>
 
   <div class="btn-container">
     <button class="btn" onclick="nextQuestion()">はい</button>
@@ -99,14 +99,6 @@
 </div>
 
 <script>
-  // URLから名前を取得
-  let userName = new URLSearchParams(window.location.search).get("name");
-  
-  // 名前がある場合、質問の文に埋め込む
-  if (userName) {
-    document.getElementById("question").innerText = `${userName}さんは丸紅情報システムズに所属している？`;
-  }
-
   function nextQuestion() {
     alert("次の処理へ進みます！（まだ実装予定）");
     // ここで次の質問処理を追加できる
