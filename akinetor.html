@@ -17,6 +17,7 @@
       align-items: center;
       min-height: 100vh;
       text-align: center;
+      position: relative;
     }
     .container {
       max-width: 600px;
@@ -26,22 +27,33 @@
       border-radius: 20px;
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
       position: relative;
+      z-index: 2; /* 背景画像の上に配置 */
+    }
+    .background-image {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      max-width: 800px; /* 画像サイズ調整 */
+      opacity: 0.8; /* 少し透過させる */
+      z-index: 1;
     }
     h1 {
       font-size: 32px;
       margin-bottom: 20px;
     }
     .question {
-      font-size: 24px; /* 🔹 質問を大きく */
+      font-size: 24px;
       margin-bottom: 20px;
     }
     .btn-container {
       display: flex;
       justify-content: center;
-      gap: 20px; /* 🔹 ボタンの間隔 */
+      gap: 20px;
     }
     .btn {
-      padding: 16px 28px; /* 🔹 ボタンを大きく */
+      padding: 16px 28px;
       font-size: 22px;
       background-color: #ffcc00;
       color: black;
@@ -56,16 +68,6 @@
       background-color: #ffdb4d;
       transform: scale(1.08);
     }
-    .person-image {
-      position: absolute;
-      top: -70px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 120px; /* 🔹 画像サイズをUP */
-      height: 120px;
-      border-radius: 50%;
-      border: 4px solid white;
-    }
 
     /* スマホ対応 */
     @media (max-width: 480px) {
@@ -75,17 +77,18 @@
       .btn {
         width: 100%;
       }
-      .person-image {
-        width: 100px; /* 🔹 スマホで少し縮小 */
-        height: 100px;
+      .background-image {
+        max-width: 100%; /* スマホ画面幅にフィット */
+        opacity: 0.6;
       }
     }
   </style>
 </head>
 <body>
 
+<img src="316631-30.jpg" alt="背景画像" class="background-image">
+
 <div class="container">
-  <img src="31456320_m.jpg" alt="人物画像" class="person-image">
   <h1>あなたは誰？</h1>
   <p class="question" id="question">○○さんは丸紅情報システムズに所属している？</p>
 
