@@ -1,1 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Akinetor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      background: linear-gradient(to bottom, #2b1055, #7597de);
+      color: white;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      text-align: center;
+    }
+    .container {
+      max-width: 600px;
+      width: 90%;
+      padding: 30px;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 15px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 20px;
+    }
+    .question {
+      font-size: 22px;
+      margin-bottom: 20px;
+    }
+    .btn {
+      padding: 14px 24px;
+      font-size: 20px;
+      background-color: #ffcc00;
+      color: black;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      width: 90%;
+      max-width: 300px;
+      margin: 10px;
+      transition: transform 0.2s ease, background-color 0.2s;
+    }
+    .btn:hover {
+      background-color: #ffdb4d;
+      transform: scale(1.05);
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>アキネーター</h1>
+  <p class="question" id="question">○○さんは丸紅情報システムズに所属している？</p>
+
+  <button class="btn" onclick="nextQuestion()">はい</button>
+  <button class="btn" onclick="nextQuestion()">部分的にそう</button>
+</div>
+
+<script>
+  // URLから名前を取得
+  let userName = new URLSearchParams(window.location.search).get("name");
+  
+  // 名前がある場合、質問の文に埋め込む
+  if (userName) {
+    document.getElementById("question").innerText = `${userName}さんは丸紅情報システムズに所属している？`;
+  }
+
+  function nextQuestion() {
+    alert("次の処理へ進みます！（まだ実装予定）");
+    // ここで次の質問処理を追加できる
+  }
+</script>
+
+</body>
+</html>
 
