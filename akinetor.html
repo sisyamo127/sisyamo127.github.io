@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Akinetor</title>
+  <title>あなたは誰？</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body {
@@ -21,50 +21,50 @@
     .container {
       max-width: 600px;
       width: 90%;
-      padding: 30px;
-      background: rgba(0, 0, 0, 0.6);
-      border-radius: 15px;
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+      padding: 40px;
+      background: rgba(0, 0, 0, 0.7);
+      border-radius: 20px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
       position: relative;
     }
     h1 {
-      font-size: 28px;
+      font-size: 32px;
       margin-bottom: 20px;
     }
     .question {
-      font-size: 22px;
+      font-size: 24px; /* 🔹 質問を大きく */
       margin-bottom: 20px;
     }
     .btn-container {
       display: flex;
       justify-content: center;
-      gap: 15px; /* ボタン間の間隔 */
+      gap: 20px; /* 🔹 ボタンの間隔 */
     }
     .btn {
-      padding: 14px 24px;
-      font-size: 20px;
+      padding: 16px 28px; /* 🔹 ボタンを大きく */
+      font-size: 22px;
       background-color: #ffcc00;
       color: black;
       border: none;
-      border-radius: 10px;
+      border-radius: 12px;
       cursor: pointer;
-      width: 40%;
-      max-width: 200px;
+      width: 45%;
+      max-width: 250px;
       transition: transform 0.2s ease, background-color 0.2s;
     }
     .btn:hover {
       background-color: #ffdb4d;
-      transform: scale(1.05);
+      transform: scale(1.08);
     }
-    .arab-image {
+    .person-image {
       position: absolute;
-      top: -50px;
+      top: -70px;
       left: 50%;
       transform: translateX(-50%);
-      width: 100px;
-      height: auto;
+      width: 120px; /* 🔹 画像サイズをUP */
+      height: 120px;
       border-radius: 50%;
-      border: 3px solid white;
+      border: 4px solid white;
     }
 
     /* スマホ対応 */
@@ -75,14 +75,18 @@
       .btn {
         width: 100%;
       }
+      .person-image {
+        width: 100px; /* 🔹 スマホで少し縮小 */
+        height: 100px;
+      }
     }
   </style>
 </head>
 <body>
 
 <div class="container">
-  <img src="31456320_m.jpg" alt="アラブ人の代わりの画像" class="arab-image">
-  <h1>アキネーター</h1>
+  <img src="31456320_m.jpg" alt="人物画像" class="person-image">
+  <h1>あなたは誰？</h1>
   <p class="question" id="question">○○さんは丸紅情報システムズに所属している？</p>
 
   <div class="btn-container">
