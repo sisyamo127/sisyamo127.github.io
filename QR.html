@@ -2,22 +2,38 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>QR認証</title>
+  <title>Welcome to Our Wedding</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body {
-      font-family: 'Arial', sans-serif;
-      background: #f9f9f9;
+      font-family: 'Yu Mincho', 'Hiragino Mincho Pro', serif;
+      background-color: #f9f5f0;
+      color: #4a3b30;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
       text-align: center;
-      padding: 20px;
     }
     .container {
-      max-width: 400px;
-      margin: 0 auto;
-      padding: 20px;
-      background: white;
-      border-radius: 10px;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      max-width: 600px;
+      width: 90%;
+      padding: 40px;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 20px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      font-size: 32px;
+      margin-bottom: 20px;
+      color: #a67c52;
+    }
+    p {
+      font-size: 18px;
+      margin-bottom: 20px;
     }
     input, button {
       width: 100%;
@@ -26,14 +42,14 @@
       font-size: 16px;
     }
     button {
-      background: #28a745;
+      background: #a67c52;
       color: white;
       border: none;
       cursor: pointer;
       border-radius: 5px;
     }
     button:hover {
-      background: #218838;
+      background: #8c6239;
     }
     .hidden {
       display: none;
@@ -43,7 +59,7 @@
 <body>
 
 <div class="container">
-  <h1>QR認証</h1>
+  <h1>Welcome to Our Wedding</h1>
   <p>お名前（完全一致）とパスワードを入力してください</p>
   <input type="text" id="fullName" placeholder="お名前を入力">
   <input type="password" id="password" placeholder="パスワードを入力">
@@ -95,12 +111,15 @@
             return;
         }
 
+        if (fullName === "林昂佑") {
+            // 林昂佑のみBMIへ遷移
+            window.location.href = `https://sisyamo127.github.io/BMI.html`;
+            return;
+        }
+
         // 通常のメッセージ表示
         document.getElementById("card").innerHTML = `<strong>${fullName} 様</strong><br><br>${dataMap[fullName].message}`;
         document.getElementById("card").classList.remove("hidden");
-
-        // 林昂佑 の場合、BMIボタンを表示
-        document.getElementById("bmiButton").classList.toggle("hidden", fullName !== "林昂佑");
 
     } catch (error) {
         console.error("CSVの読み込みに失敗しました:", error);
