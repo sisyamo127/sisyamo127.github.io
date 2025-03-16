@@ -130,6 +130,7 @@
       return;
     }
 
+    // 通常のフロー
     if (currentQuestionIndex < questions.length - 1) {
       currentQuestionIndex++;
       document.getElementById("question").innerText = questions[currentQuestionIndex];
@@ -138,10 +139,12 @@
 
   function handleIkusaburouAnswer(answer) {
     if (answer === "はい、そうです") {
+      // 「そんなわけないだろう」を表示
       document.getElementById("wrongText").style.display = "block";
       document.getElementById("nextButton").style.display = "block";
       document.getElementById("buttons").style.display = "none";
     } else {
+      // 「いいえ、違います」を選んだ場合も通常のフローへ
       continueQuestions();
     }
   }
