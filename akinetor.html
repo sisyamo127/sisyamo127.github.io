@@ -19,6 +19,16 @@
       text-align: center;
       position: relative;
     }
+    .background-container {
+      position: relative;
+      width: 100%;
+      max-width: 600px;
+      margin-bottom: -20px; /* 🔹 見出しとの間隔を調整 */
+    }
+    .background-image {
+      width: 100%;
+      opacity: 0.7; /* 🔹 透過度を下げて目立ちすぎないように */
+    }
     .container {
       max-width: 600px;
       width: 90%;
@@ -27,17 +37,7 @@
       border-radius: 20px;
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
       position: relative;
-      z-index: 2; /* 背景画像の上に配置 */
-    }
-    .background-image {
-      position: absolute;
-      top: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 100%;
-      max-width: 800px; /* 画像サイズ調整 */
-      opacity: 0.8; /* 少し透過させる */
-      z-index: 1;
+      z-index: 2; /* 🔹 背景画像の上に配置 */
     }
     h1 {
       font-size: 32px;
@@ -77,16 +77,18 @@
       .btn {
         width: 100%;
       }
-      .background-image {
-        max-width: 100%; /* スマホ画面幅にフィット */
-        opacity: 0.6;
+      .background-container {
+        max-width: 90%;
+        margin-bottom: -10px; /* 🔹 スマホでも間隔を調整 */
       }
     }
   </style>
 </head>
 <body>
 
-<img src="316631-30.jpg" alt="背景画像" class="background-image">
+<div class="background-container">
+  <img src="316631-30.jpg" alt="背景画像" class="background-image">
+</div>
 
 <div class="container">
   <h1>あなたは誰？</h1>
