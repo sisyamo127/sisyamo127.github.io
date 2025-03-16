@@ -23,11 +23,11 @@
       position: relative;
       width: 100%;
       max-width: 600px;
-      margin-bottom: -20px; /* 🔹 見出しとの間隔を調整 */
+      margin-bottom: -20px;
     }
     .background-image {
       width: 100%;
-      opacity: 0.7; /* 🔹 透過度を下げて目立ちすぎないように */
+      opacity: 0.7;
     }
     .container {
       max-width: 600px;
@@ -37,7 +37,7 @@
       border-radius: 20px;
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
       position: relative;
-      z-index: 2; /* 🔹 背景画像の上に配置 */
+      z-index: 2;
     }
     h1 {
       font-size: 32px;
@@ -50,11 +50,12 @@
     .btn-container {
       display: flex;
       justify-content: center;
-      gap: 20px;
+      flex-wrap: wrap;
+      gap: 15px;
     }
     .btn {
-      padding: 16px 28px;
-      font-size: 22px;
+      padding: 16px 24px;
+      font-size: 20px;
       background-color: #ffcc00;
       color: black;
       border: none;
@@ -68,6 +69,24 @@
       background-color: #ffdb4d;
       transform: scale(1.08);
     }
+    .red-text {
+      color: red;
+      font-size: 22px;
+      font-weight: bold;
+      margin-top: 15px;
+      display: none;
+    }
+    .next-btn {
+      margin-top: 15px;
+      padding: 12px 20px;
+      font-size: 18px;
+      background-color: #ff5733;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      display: none;
+    }
 
     /* スマホ対応 */
     @media (max-width: 480px) {
@@ -79,7 +98,7 @@
       }
       .background-container {
         max-width: 90%;
-        margin-bottom: -10px; /* 🔹 スマホでも間隔を調整 */
+        margin-bottom: -10px;
       }
     }
   </style>
@@ -92,18 +111,61 @@
 
 <div class="container">
   <h1>あなたは誰？</h1>
-  <p class="question" id="question">丸紅情報システムズに所属している？</p>
+  <p class="question" id="question">パチンカス？</p>
 
-  <div class="btn-container">
-    <button class="btn" onclick="nextQuestion()">はい</button>
-    <button class="btn" onclick="nextQuestion()">部分的にそう</button>
+  <div class="btn-container" id="buttons">
+    <button class="btn" onclick="nextQuestion('はい')">はい</button>
+    <button class="btn" onclick="nextQuestion('絶対そう')">絶対そう</button>
   </div>
+
+  <p class="red-text" id="wrongText">そんなわけないだろう</p>
+  <button class="next-btn" id="nextButton" onclick="continueQuestions()">次の質問へ進む</button>
 </div>
 
 <script>
-  function nextQuestion() {
-    alert("次の処理へ進みます！（まだ実装予定）");
-    // ここで次の質問処理を追加できる
+  let currentQuestionIndex = 0;
+  let userName = new URLSearchParams(window.location.search).get("name");
+
+  // 質問リスト
+  let questions = [
+    "歌うのが好き？",
+    "もしかして、山崎育三郎",
+    "新郎と同期？",
+    "真面目に働いている？"
+  ];
+
+  let choices = [
+    ["はい", "部分的にそう"],
+    ["はい、そうです", "いいえ、違います"],
+    ["はい", "部分的にそう"],
+    ["いいえ", "そんなことはない"]
+  ];
+
+  function nextQuestion(answer) {
+    // 山崎育三郎の場合、特別処理
+    if (currentQuestionIndex === 1 && answer === "はい、そうです") {
+      document.getElementById("wrongText").style.display = "block";
+      document.getElementById("nextButton").style.display = "block";
+      document.getElementById("buttons").style.display = "none";
+      return;
+    }
+
+    // 次の質問がある場合
+    if (currentQuestionIndex < questions.length) {
+      document.getElementById("question").innerText = questions[currentQuestionIndex];
+      document.getElementById("buttons").innerHTML = `
+        <button class="btn" onclick="nextQuestion('${choices[currentQuestionIndex][0]}')">${choices[currentQuestionIndex][0]}</button>
+        <button class="btn" onclick="nextQuestion('${choices[currentQuestionIndex][1]}')">${choices[currentQuestionIndex][1]}</button>
+      `;
+      currentQuestionIndex++;
+    }
+  }
+
+  function continueQuestions() {
+    document.getElementById("wrongText").style.display = "none";
+    document.getElementById("nextButton").style.display = "none";
+    document.getElementById("buttons").style.display = "flex";
+    nextQuestion();
   }
 </script>
 
