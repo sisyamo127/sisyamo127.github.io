@@ -116,10 +116,12 @@
   ];
 
   let currentQuestionIndex = 0;
+  let ikusaburouPhase = false; // 山崎育三郎のフラグ
 
   function nextQuestion(answer) {
     if (currentQuestionIndex === 1) {
       // 「歌うのが好き？」の次で画像を表示
+      ikusaburouPhase = true;
       document.getElementById("imageContainer").style.display = "block";
       document.getElementById("questionTitle").innerText = "もしかして、山崎育三郎？";
       document.getElementById("question").innerText = "";
@@ -138,7 +140,7 @@
   }
 
   function handleIkusaburouAnswer(answer) {
-    if (answer === "はい、そうです") {
+    if (ikusaburouPhase && answer === "はい、そうです") {
       // 「そんなわけないだろう」を表示
       document.getElementById("wrongText").style.display = "block";
       document.getElementById("nextButton").style.display = "block";
@@ -154,6 +156,7 @@
     document.getElementById("nextButton").style.display = "none";
     document.getElementById("buttons").style.display = "flex";
     document.getElementById("imageContainer").style.display = "none";
+    ikusaburouPhase = false;
 
     // 「新郎と同期？」の質問へジャンプ
     currentQuestionIndex = 2;
