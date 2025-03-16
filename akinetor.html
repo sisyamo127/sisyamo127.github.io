@@ -53,9 +53,6 @@
       width: 45%;
       max-width: 250px;
     }
-    .btn:hover {
-      background-color: #ffdb4d;
-    }
     .red-text {
       color: red;
       font-size: 22px;
@@ -115,6 +112,7 @@
         <button class='btn' onclick='showIkusaburou()'>部分的にそう</button>
       `;
     } else if (nextQuestion === "新郎と同期？") {
+      document.getElementById("imageContainer").style.display = "none"; // 画像を消す
       document.getElementById("buttons").innerHTML = `
         <button class='btn' onclick='showNext("真面目に働いている？")'>はい</button>
         <button class='btn' onclick='showNext("真面目に働いている？")'>部分的にそう</button>
@@ -134,7 +132,7 @@
 
   function showIkusaburou() {
     document.getElementById("questionTitle").innerText = "もしかして、山崎育三郎？";
-    document.getElementById("question").innerText = "";
+    document.getElementById("question").style.display = "none"; // 質問を消す
     document.getElementById("imageContainer").style.display = "block";
 
     document.getElementById("buttons").innerHTML = `
