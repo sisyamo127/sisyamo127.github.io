@@ -151,7 +151,11 @@
     document.getElementById("nextButton").style.display = "none";
     document.getElementById("buttons").style.display = "flex";
     document.getElementById("imageContainer").style.display = "none";
-    nextQuestion();
+
+    // 「新郎と同期？」の質問へジャンプ
+    currentQuestionIndex = 2;
+    document.getElementById("questionTitle").innerText = "あなたは誰？";
+    document.getElementById("question").innerText = questions[currentQuestionIndex];
   }
 </script>
 
