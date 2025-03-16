@@ -1,63 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Wedding Message</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: 'Yu Mincho', 'Hiragino Mincho Pro', serif;
+      background-color: #f9f5f0;
+      color: #4a3b30;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      text-align: center;
+      font-size: 18px;
+    }
+    .container {
+      max-width: 600px;
+      width: 90%;
+      padding: 20px;
+    }
+    /* 入力フォーム */
+    #inputForm {
+      margin-bottom: 20px;
+    }
+    input {
+      padding: 14px;
+      font-size: 20px;
+      width: 90%;
+      max-width: 400px;
+      border: 2px solid #d1c4b2;
+      border-radius: 8px;
+      margin-bottom: 15px;
+    }
+    button {
+      padding: 14px 20px;
+      font-size: 20px;
+      background-color: #a67c52;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 90%;
+      max-width: 400px;
+      margin-bottom: 15px;
+    }
+    /* メッセージ表示エリア */
+    .message {
+      margin-top: 30px;
+      padding: 30px;
+      border: 2px solid #e0d6c9;
+      border-radius: 10px;
+      background-color: #fffdf9;
+      text-align: left;
+      line-height: 1.8;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+      display: none;
+    }
+    /* BMIボタン */
+    .bmi-button {
+      display: none;
+      margin-top: 20px;
+      background-color: #d9534f;
+      color: #fff;
+      cursor: pointer;
+      padding: 14px 20px;
+      font-size: 20px;
+      width: 90%;
+      max-width: 400px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Welcome to Our Wedding</h1>
+
+  <div id="inputForm">
+    <p>お名前（完全一致）とパスワードを入力してください</p>
+    <input type="text" id="fullName" placeholder="お名前をご入力ください"><br>
+    <input type="password" id="password" placeholder="パスワードを入力してください"><br>
+    <button id="showButton" onclick="fetchCSV()">メッセージを見る</button>
+  </div>
+
+  <div id="card" class="message"></div>
+
+  <!-- 林昂佑の場合のみ BMI ボタン -->
+  <button id="bmiButton" class="bmi-button" onclick="location.href='https://sisyamo127.github.io/BMI.html'">BMIを計算する</button>
+</div>
+
+<footer>
+  Thank you for celebrating with us.
+</footer>
+
 <script>
   async function fetchCSV() {
     const fullName = document.getElementById("fullName").value.trim();
     const password = document.getElementById("password").value.trim();
 
     if (!fullName || !password) {
-        alert("お名前とパスワードを入力してください。");
-        return;
+      alert("お名前とパスワードを入力してください。");
+      return;
     }
 
     try {
-        const response = await fetch(`https://sisyamo127.github.io/data.csv?t=${new Date().getTime()}`);
-        const text = await response.text();
-        const rows = text.split(/\r?\n/).slice(1);
-        const dataMap = {};
+      // GitHubのCSVをキャッシュ回避付きで取得
+      const response = await fetch(`https://sisyamo127.github.io/data.csv?t=${new Date().getTime()}`);
+      const text = await response.text();
+      const rows = text.split(/\r?\n/).slice(1); // タイトル行を除く
+      const dataMap = {};
 
-        rows.forEach(row => {
-            const cols = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-            if (cols.length >= 3) {
-                const csvFullName = cols[0].trim();
-                let csvMessage = cols[1].trim().replace(/\\n/g, "<br>");
-                const csvPassword = cols[2].trim();
-                dataMap[csvFullName] = { message: csvMessage, password: csvPassword };
-            }
-        });
-
-        if (!dataMap[fullName]) {
-            alert("名前が見つかりません。");
-            return;
+      rows.forEach(row => {
+        const cols = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+        if (cols.length >= 3) {
+          const csvFullName = cols[0].trim();
+          let csvMessage = cols[1].trim().replace(/\\n/g, "<br>");
+          const csvPassword = cols[2].trim();
+          // プレースホルダーの置換（もし {{name}} が含まれているなら）
+          csvMessage = csvMessage.replace(/\{\{name\}\}/g, `${csvFullName} 様`);
+          dataMap[csvFullName] = { message: csvMessage, password: csvPassword };
         }
+      });
 
-        if (dataMap[fullName].password !== password) {
-            alert("パスワードが違います。");
-            return;
-        }
+      if (!dataMap[fullName]) {
+        alert("名前が見つかりません。");
+        return;
+      }
 
-        // アキネーター対象者リスト
-        const akinetorUsers = ["藤田睦", "濱中直希", "仲谷玖真", "濵中大和", "村上真奈美", "山本千裕"];
+      if (dataMap[fullName].password !== password) {
+        alert("パスワードが違います。");
+        return;
+      }
 
+      // アキネーター対象者リスト（特別処理用）
+      const akinetorUsers = ["藤田睦", "濱中直希", "仲谷玖真", "濵中大和", "村上真奈美", "山本千裕"];
+      if (akinetorUsers.includes(fullName)) {
+        // 「仲谷玖真」のみ特別フローに special=true を付与
         if (fullName === "仲谷玖真") {
-            // 仲谷玖真だけ特別フローのURLへ
-            window.location.href = `https://sisyamo127.github.io/akinetor.html?name=${encodeURIComponent(fullName)}&special=true`;
-            return;
-        } else if (akinetorUsers.includes(fullName)) {
-            // 他の対象者は通常のアキネーターフローへ
-            window.location.href = `https://sisyamo127.github.io/akinetor.html?name=${encodeURIComponent(fullName)}`;
-            return;
+          window.location.href = `https://sisyamo127.github.io/akinetor.html?name=${encodeURIComponent(fullName)}&special=true`;
+          return;
+        } else {
+          window.location.href = `https://sisyamo127.github.io/akinetor.html?name=${encodeURIComponent(fullName)}`;
+          return;
         }
+      }
 
-        // 入力フォームを非表示にし、メッセージを表示
-        document.getElementById("inputForm").style.display = "none";
-        document.getElementById("card").innerHTML = `<strong>${fullName} 様</strong><br><br>${dataMap[fullName].message}`;
-        document.getElementById("card").style.display = "block";
+      // 正常な場合、通常のメッセージ表示
+      document.getElementById("inputForm").style.display = "none";
+      document.getElementById("card").innerHTML = `<strong>${fullName} 様</strong><br><br>${dataMap[fullName].message}`;
+      document.getElementById("card").style.display = "block";
 
-        // 林昂佑 の場合、BMIボタンを表示
-        document.getElementById("bmiButton").style.display = (fullName === "林昂佑") ? "block" : "none";
+      // 林昂佑の場合は BMI ボタン表示
+      document.getElementById("bmiButton").style.display = (fullName === "林昂佑") ? "block" : "none";
 
     } catch (error) {
-        console.error("CSVの読み込みに失敗しました:", error);
-        alert("データを読み込めませんでした。");
+      console.error("CSVの読み込みに失敗しました:", error);
+      alert("データを読み込めませんでした。");
     }
   }
 </script>
+
+</body>
+</html>
