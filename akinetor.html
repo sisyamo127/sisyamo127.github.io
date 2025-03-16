@@ -2,13 +2,13 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Welcome to Our Wedding</title>
+  <title>あなたは誰？</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body {
-      font-family: 'Yu Mincho', 'Hiragino Mincho Pro', serif;
-      background-color: #f9f5f0;
-      color: #4a3b30;
+      font-family: 'Arial', sans-serif;
+      background: linear-gradient(to bottom, #2b1055, #7597de);
+      color: white;
       margin: 0;
       padding: 0;
       display: flex;
@@ -22,14 +22,17 @@
       max-width: 600px;
       width: 90%;
       padding: 40px;
-      background: rgba(255, 255, 255, 0.9);
+      background: rgba(0, 0, 0, 0.8);
       border-radius: 20px;
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+      position: relative;
+      z-index: 2;
     }
     .question-title {
       font-size: 32px;
       margin-bottom: 20px;
-      color: #a67c52;
+      color: #ffcc00;
+      font-weight: bold;
     }
     .question {
       font-size: 24px;
@@ -43,8 +46,8 @@
     .btn {
       padding: 16px 24px;
       font-size: 20px;
-      background-color: #a67c52;
-      color: white;
+      background-color: #ffcc00;
+      color: black;
       border: none;
       border-radius: 12px;
       cursor: pointer;
@@ -52,7 +55,7 @@
       max-width: 250px;
     }
     .btn:hover {
-      background-color: #8c6239;
+      background-color: #ffdb4d;
     }
     .red-text {
       color: red;
@@ -86,7 +89,7 @@
 <body>
 
 <div class="container">
-  <h1 id="questionTitle" class="question-title">Welcome to Our Wedding</h1>
+  <h1 id="questionTitle" class="question-title">あなたは誰？</h1>
 
   <div class="image-container" id="imageContainer">
     <img src="ikusaburou.jpg" alt="山崎育三郎">
@@ -128,7 +131,7 @@
       return;
     } else {
       document.getElementById("imageContainer").style.display = "none";
-      document.getElementById("questionTitle").innerText = "Welcome to Our Wedding";
+      document.getElementById("questionTitle").innerText = "あなたは誰？";
     }
 
     if (currentQuestionIndex === 2 && answer === "はい、そうです") {
