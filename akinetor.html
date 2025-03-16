@@ -57,24 +57,6 @@
     .btn:hover {
       background-color: #ffdb4d;
     }
-    .red-text {
-      color: red;
-      font-size: 22px;
-      font-weight: bold;
-      margin-top: 15px;
-      display: none;
-    }
-    .next-btn {
-      margin-top: 15px;
-      padding: 12px 20px;
-      font-size: 18px;
-      background-color: #ff5733;
-      color: white;
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
-      display: none;
-    }
     .image-container {
       display: none;
       margin-bottom: 20px;
@@ -102,15 +84,12 @@
     <button class="btn" onclick="nextQuestion('絶対そう')">絶対そう</button>
   </div>
 
-  <p class="red-text" id="wrongText">そんなわけないだろう</p>
-  <button class="next-btn" id="nextButton" onclick="continueQuestions()">次の質問へ進む</button>
 </div>
 
 <script>
   let questions = [
     "パチンカス？",
     "歌うのが好き？",
-    "もしかして、山崎育三郎",
     "新郎と同期？",
     "真面目に働いている？",
     "もしかして、仲谷玖真"
@@ -119,26 +98,14 @@
   let currentQuestionIndex = 0;
 
   function nextQuestion(answer) {
-    if (currentQuestionIndex === 2) {
-      // 山崎育三郎の質問時
+    if (currentQuestionIndex === 1) {
+      // 歌うのが好き？の次で画像を表示
       document.getElementById("imageContainer").style.display = "block";
-      document.getElementById("questionTitle").innerText = "もしかして、山崎育三郎？";
-      document.getElementById("question").innerText = "";
-      document.getElementById("buttons").innerHTML = `
-        <button class="btn" onclick="nextQuestion('はい、そうです')">はい、そうです</button>
-        <button class="btn" onclick="nextQuestion('いいえ、違います')">いいえ、違います</button>
-      `;
-      return;
-    } else {
-      document.getElementById("imageContainer").style.display = "none";
-      document.getElementById("questionTitle").innerText = "あなたは誰？";
-    }
-
-    if (currentQuestionIndex === 2 && answer === "はい、そうです") {
-      // 「はい、そうです」を選んだ場合の特別処理
-      document.getElementById("wrongText").style.display = "block";
-      document.getElementById("nextButton").style.display = "block";
-      document.getElementById("buttons").style.display = "none";
+      setTimeout(() => {
+        currentQuestionIndex++;
+        document.getElementById("question").innerText = questions[currentQuestionIndex];
+        document.getElementById("imageContainer").style.display = "none";
+      }, 2000); // 画像を2秒間表示
       return;
     }
 
@@ -148,13 +115,6 @@
     } else {
       alert("質問が終了しました！");
     }
-  }
-
-  function continueQuestions() {
-    document.getElementById("wrongText").style.display = "none";
-    document.getElementById("nextButton").style.display = "none";
-    document.getElementById("buttons").style.display = "flex";
-    nextQuestion();
   }
 </script>
 
