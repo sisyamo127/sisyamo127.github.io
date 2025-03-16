@@ -72,6 +72,15 @@
       cursor: pointer;
       display: none;
     }
+    .image-container {
+      display: none;
+      margin-bottom: 20px;
+    }
+    .image-container img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 10px;
+    }
   </style>
 </head>
 <body>
@@ -80,55 +89,81 @@
   <h1 id="questionTitle" class="question-title">あなたは誰？</h1>
   <p class="question" id="question">パチンカス？</p>
 
-  <div class="btn-container" id="buttons">
-    <button class="btn" onclick="nextQuestion()">はい</button>
-    <button class="btn" onclick="nextQuestion()">絶対そう</button>
+  <div class="btn-container">
+    <button class="btn" onclick="showNextQuestion('歌うのが好き？')">はい</button>
+    <button class="btn" onclick="showNextQuestion('歌うのが好き？')">絶対そう</button>
   </div>
 
-  <p class="red-text" id="wrongText">そんなわけないだろう</p>
-  <button class="next-btn" id="nextButton" onclick="continueQuestions()">次の質問に進む</button>
 </div>
 
 <script>
-  let questions = [
-    "パチンカス？",
-    "歌うのが好き？",
-    "新郎と同期？",
-    "真面目に働いている？",
-    "もしかして、仲谷玖真"
-  ];
-  let currentQuestionIndex = 0;
-  let ikusaburouPhase = false;
-
-  function nextQuestion() {
-    if (currentQuestionIndex === 1) {
-      ikusaburouPhase = true;
-      document.getElementById("questionTitle").innerText = "もしかして、山崎育三郎？";
-      document.getElementById("question").innerText = "";
-      document.getElementById("buttons").innerHTML = `
-        <button class="btn" onclick="handleIkusaburouAnswer('はい、そうです')">はい、そうです。</button>
-        <button class="btn" onclick="handleIkusaburouAnswer('いいえ、違います')">いいえ、違います。</button>
-      `;
-      return;
-    }
-    currentQuestionIndex++;
-    document.getElementById("question").innerText = questions[currentQuestionIndex];
+  function showNextQuestion(questionText) {
+    document.getElementById("question").innerText = questionText;
+    document.querySelector(".btn-container").innerHTML = `
+      <button class="btn" onclick="showIkusaburou()">はい</button>
+      <button class="btn" onclick="showIkusaburou()">部分的にそう</button>
+    `;
   }
 
-  function handleIkusaburouAnswer(answer) {
-    if (answer === "はい、そうです") {
-      document.getElementById("wrongText").style.display = "block";
-      document.getElementById("nextButton").style.display = "block";
-      document.getElementById("buttons").style.display = "none";
-    } else {
-      continueQuestions();
-    }
+  function showIkusaburou() {
+    document.getElementById("questionTitle").innerText = "もしかして、山崎育三郎？";
+    document.getElementById("question").innerText = "";
+    
+    let imageContainer = document.createElement("div");
+    imageContainer.classList.add("image-container");
+    imageContainer.innerHTML = `<img src="ikusaburou.jpg" alt="山崎育三郎">`;
+    document.querySelector(".container").insertBefore(imageContainer, document.querySelector(".btn-container"));
+    imageContainer.style.display = "block";
+
+    document.querySelector(".btn-container").innerHTML = `
+      <button class="btn" onclick="showWrongText()">はい、そうです</button>
+      <button class="btn" onclick="showNextQuestionAfterIkusaburou()">いいえ、違います</button>
+    `;
   }
 
-  function continueQuestions() {
-    currentQuestionIndex = 2;
+  function showWrongText() {
+    let wrongText = document.createElement("p");
+    wrongText.classList.add("red-text");
+    wrongText.innerText = "そんなわけないだろう";
+    document.querySelector(".container").appendChild(wrongText);
+    wrongText.style.display = "block";
+
+    let nextButton = document.createElement("button");
+    nextButton.classList.add("next-btn");
+    nextButton.innerText = "次の質問に進む";
+    nextButton.onclick = showNextQuestionAfterIkusaburou;
+    document.querySelector(".container").appendChild(nextButton);
+    nextButton.style.display = "block";
+  }
+
+  function showNextQuestionAfterIkusaburou() {
     document.getElementById("questionTitle").innerText = "あなたは誰？";
-    document.getElementById("question").innerText = questions[currentQuestionIndex];
+    document.getElementById("question").innerText = "新郎と同期？";
+
+    document.querySelector(".btn-container").innerHTML = `
+      <button class="btn" onclick="showNextQuestion('真面目に働いている？')">はい</button>
+      <button class="btn" onclick="showNextQuestion('真面目に働いている？')">部分的にそう</button>
+    `;
+  }
+
+  function showNextQuestion(questionText) {
+    document.getElementById("question").innerText = questionText;
+    
+    if (questionText === "真面目に働いている？") {
+      document.querySelector(".btn-container").innerHTML = `
+        <button class="btn" onclick="showFinalQuestion()">いいえ</button>
+        <button class="btn" onclick="showFinalQuestion()">そんなことはない</button>
+      `;
+    }
+  }
+
+  function showFinalQuestion() {
+    document.getElementById("question").innerText = "もしかして、仲谷玖真？";
+
+    document.querySelector(".btn-container").innerHTML = `
+      <button class="btn">はい</button>
+      <button class="btn">いいえ</button>
+    `;
   }
 </script>
 
