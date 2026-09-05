@@ -3,8 +3,8 @@ WordPressへの自動投稿は行わない。生成された記事は手動でWo
 
 必要な環境変数(.envファイルに記載):
   ANTHROPIC_API_KEY     Anthropic APIキー
-  AMAZON_ACCESS_KEY     Amazon PA-APIのAccess Key ID
-  AMAZON_SECRET_KEY     Amazon PA-APIのSecret Key
+  AMAZON_ACCESS_KEY     Amazon Creators APIの認証情報ID(amzn1.application-oa2-client...)
+  AMAZON_SECRET_KEY     Amazon Creators APIのクライアントシークレット
   AMAZON_ASSOCIATE_TAG  Amazonアソシエイトタグ
   ANTHROPIC_MODEL       (任意) 使用するモデルID。省略時は claude-sonnet-5
 
@@ -100,13 +100,15 @@ def generate_article() -> dict:
 
 
 def search_amazon_products(keyword: str, item_count: int = 3) -> list:
-    from amazon_paapi import AmazonApi
+    from amazon_creatorsapi import AmazonCreatorsApi
 
-    amazon = AmazonApi(
+    # バージョン"3.3"はamazon.co.jp(日本)向けのCreators API認証エンドポイントを指す。
+    amazon = AmazonCreatorsApi(
         os.environ["AMAZON_ACCESS_KEY"],
         os.environ["AMAZON_SECRET_KEY"],
+        "3.3",
         os.environ["AMAZON_ASSOCIATE_TAG"],
-        "JP",
+        country="JP",
     )
     result = amazon.search_items(keywords=keyword, item_count=item_count)
     return result.items or []
