@@ -21,6 +21,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r scripts/requirements.txt
 
+      - name: Check IP (temporary)
+        run: curl -s https://api.ipify.org
+
+      - name: Test WordPress API (temporary)
+        run: |
+          curl -v \
+            -A "Mozilla/5.0" \
+            "https://www.omotya-museum.com/wp-json/wp/v2/posts"
+
       - name: Generate article and post to WordPress
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
