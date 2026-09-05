@@ -21,14 +21,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r scripts/requirements.txt
 
-      - name: Diagnose WordPress REST API access (temporary)
-        env:
-          WP_URL: ${{ secrets.WP_URL }}
+      - name: Check IP (temporary)
+        run: curl -s https://api.ipify.org
+
+      - name: Test WordPress API (temporary)
         run: |
-          echo "GET (no auth):"
-          curl -s -o /dev/null -w "HTTP status: %{http_code}\n" "$WP_URL/wp-json/wp/v2/posts"
-          echo "GET (browser-like User-Agent):"
-          curl -s -o /dev/null -w "HTTP status: %{http_code}\n" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" "$WP_URL/wp-json/wp/v2/posts"
+          curl -v \
+            -A "Mozilla/5.0" \
+            "https://www.omotya-museum.com/wp-json/wp/v2/posts"
 
       - name: Generate article and post to WordPress
         env:
