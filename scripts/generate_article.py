@@ -60,15 +60,32 @@ def fetch_categories() -> list:
     return response.json()
 
 
-def build_article_prompt(categories: list) -> str:
+def build_article_prompt(
+    categories: list, topic: str | None = None, category: str | None = None
+) -> str:
     category_names = "、".join(c["name"] for c in categories if c["name"] != "Uncategorized")
+
+    if topic:
+        topic_instruction = f"今回のテーマは必ず次の内容にすること:「{topic}」"
+    else:
+        topic_instruction = (
+            "テーマは自由に決めてください(新作トイのレビュー、レトロトイの魅力、知育玩具の選び方、"
+            "DIYおもちゃ、コレクター向け情報、プレゼント選びのコツ、旅行先での子ども向けお土産など、"
+            "おもちゃに関する範囲内で、毎回異なる話題にしてください)。"
+        )
+
+    if category:
+        category_instruction = f'"category"には必ず次の値をそのまま使うこと:「{category}」'
+    else:
+        category_instruction = (
+            "このブログの既存カテゴリーの中から、記事に最も合うものを1つだけ選んでください"
+            f"(新しいカテゴリー名を作らないこと): {category_names}"
+        )
 
     return f"""あなたは「おもちゃミュージアム」というブログの専属ライターです。
 このブログには「ゆう」というハムスターのキャラクターがいて、読者からの悩み相談に答える形で
 記事を書き始めるのが定番のスタイルです。おもちゃに関するブログ記事を1本作成してください。
-テーマは自由に決めてください(新作トイのレビュー、レトロトイの魅力、知育玩具の選び方、DIYおもちゃ、
-コレクター向け情報、プレゼント選びのコツ、旅行先での子ども向けお土産など、おもちゃに関する範囲内で、
-毎回異なる話題にしてください)。
+{topic_instruction}
 
 ## タイトル
 【】で始まる、具体的で読者の悩みに刺さるフックタイトルにする。
@@ -108,8 +125,7 @@ def build_article_prompt(categories: list) -> str:
 - 比較や一覧が適切な場面ではtable要素も使ってよい
 
 ## カテゴリー
-このブログの既存カテゴリーの中から、記事に最も合うものを1つだけ選んでください(新しいカテゴリー名を作らないこと):
-{category_names}
+{category_instruction}
 
 ## 出力形式
 必ず次のJSON形式のみで返してください。JSON以外の文章やコードブロックの記号は含めないでください。
@@ -175,8 +191,16 @@ def _content_char_count(content: str) -> int:
     return len(text.strip())
 
 
-def generate_article(categories: list, max_expand_attempts: int = 2) -> dict:
-    messages = [{"role": "user", "content": build_article_prompt(categories)}]
+def generate_article(
+    categories: list,
+    topic: str | None = None,
+    category: str | None = None,
+    max_expand_attempts: int = 2,
+    log=lambda msg: print(msg, file=sys.stderr),
+) -> dict:
+    messages = [
+        {"role": "user", "content": build_article_prompt(categories, topic, category)}
+    ]
     raw_text, article = _call_claude(messages)
 
     for _ in range(max_expand_attempts):
@@ -184,10 +208,7 @@ def generate_article(categories: list, max_expand_attempts: int = 2) -> dict:
         if char_count >= MIN_CONTENT_CHARS:
             break
 
-        print(
-            f"本文が{char_count}文字と{MIN_CONTENT_CHARS}文字未満のため、追記を依頼します...",
-            file=sys.stderr,
-        )
+        log(f"本文が{char_count}文字と{MIN_CONTENT_CHARS}文字未満のため、追記を依頼します...")
         messages.append({"role": "assistant", "content": raw_text})
         messages.append({
             "role": "user",
@@ -283,7 +304,55 @@ def resolve_category_id(category_name: str, categories: list) -> int | None:
     return None
 
 
-def post_to_wordpress_draft(title: str, content: str, category_id: int | None) -> str:
+def fetch_unsplash_image_url(keyword: str) -> str | None:
+    """Unsplashから記事テーマに合う画像のURLを1枚取得する。キーがなければNoneを返す。"""
+    access_key = os.environ.get("UNSPLASH_ACCESS_KEY")
+    if not access_key:
+        return None
+
+    response = requests.get(
+        "https://api.unsplash.com/search/photos",
+        params={"query": keyword, "per_page": 1, "orientation": "landscape"},
+        headers={"Authorization": f"Client-ID {access_key}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    results = response.json().get("results", [])
+    if not results:
+        return None
+    return results[0]["urls"]["regular"]
+
+
+def upload_featured_image(image_url: str, filename: str) -> int | None:
+    """画像URLをダウンロードしてWordPressメディアライブラリにアップロードし、メディアIDを返す。"""
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    username = os.environ["WP_USERNAME"]
+    app_password = os.environ["WP_APP_PASSWORD"]
+
+    image_response = requests.get(image_url, headers={"User-Agent": BROWSER_USER_AGENT}, timeout=60)
+    image_response.raise_for_status()
+
+    response = requests.post(
+        f"{wp_url}/wp-json/wp/v2/media",
+        auth=(username, app_password),
+        headers={
+            "User-Agent": BROWSER_USER_AGENT,
+            "Content-Disposition": f'attachment; filename="{filename}.jpg"',
+            "Content-Type": "image/jpeg",
+        },
+        data=image_response.content,
+        timeout=60,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"アイキャッチ画像のアップロードに失敗しました (HTTP {response.status_code}): {response.text}"
+        )
+    return response.json().get("id")
+
+
+def post_to_wordpress_draft(
+    title: str, content: str, category_id: int | None, featured_media_id: int | None = None
+) -> str:
     wp_url = os.environ["WP_URL"].rstrip("/")
     username = os.environ["WP_USERNAME"]
     app_password = os.environ["WP_APP_PASSWORD"]
@@ -291,6 +360,8 @@ def post_to_wordpress_draft(title: str, content: str, category_id: int | None) -
     payload = {"title": title, "content": content, "status": "draft"}
     if category_id is not None:
         payload["categories"] = [category_id]
+    if featured_media_id is not None:
+        payload["featured_media"] = featured_media_id
 
     response = requests.post(
         f"{wp_url}/wp-json/wp/v2/posts",
@@ -307,11 +378,14 @@ def post_to_wordpress_draft(title: str, content: str, category_id: int | None) -
     return post.get("link") or f"post id {post.get('id')}"
 
 
+ARTICLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "articles")
+
+
 def save_article_locally(article: dict, full_content: str) -> str:
-    os.makedirs("articles", exist_ok=True)
+    os.makedirs(ARTICLES_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     slug = re.sub(r"[^\w\-]", "", article["title"].replace(" ", "-"))[:30] or "article"
-    filepath = os.path.join("articles", f"{timestamp}-{slug}.html")
+    filepath = os.path.join(ARTICLES_DIR, f"{timestamp}-{slug}.html")
 
     keywords_line = ", ".join(article.get("keywords", []))
     html = f"""<!-- title: {article['title']} -->
@@ -326,10 +400,20 @@ def save_article_locally(article: dict, full_content: str) -> str:
     return filepath
 
 
-def main() -> None:
+def run_pipeline(
+    topic: str | None = None,
+    category: str | None = None,
+    include_amazon: bool = True,
+    include_featured_image: bool = True,
+    log=print,
+) -> dict:
+    """記事を1本生成し、ローカル保存 + WordPress下書き投稿までを行う。
+
+    呼び出し元(CLI/Webアプリ)で共通して使える結果の辞書を返す。
+    """
     categories = fetch_categories()
-    article = generate_article(categories)
-    print(f"生成された記事タイトル: {article['title']}")
+    article = generate_article(categories, topic=topic, category=category, log=log)
+    log(f"生成された記事タイトル: {article['title']}")
 
     persona = article.get("reader_persona", "読者")
     intro_html = build_conversation_balloon_html(
@@ -351,32 +435,57 @@ def main() -> None:
 
     product_html = ""
     amazon_keyword = article.get("amazon_search_keyword")
-    if amazon_keyword:
+    if include_amazon and amazon_keyword:
         try:
             products = search_amazon_products(amazon_keyword)
             product_html = build_product_card_html(products)
         except Exception as exc:
-            print(
-                f"Amazon商品検索に失敗しました(検索リンクにフォールバックします): {exc}",
-                file=sys.stderr,
-            )
+            log(f"Amazon商品検索に失敗しました(検索リンクにフォールバックします): {exc}")
         if not product_html:
             product_html = build_amazon_search_button_html(amazon_keyword)
 
-    full_content = (
-        f"{intro_html}\n\n{body}\n\n"
-        f"<h2>おすすめ商品</h2>\n{product_html}\n\n{closing_html}"
-    )
+    amazon_section = f"<h2>おすすめ商品</h2>\n{product_html}\n\n" if product_html else ""
+    full_content = f"{intro_html}\n\n{body}\n\n{amazon_section}{closing_html}"
 
     filepath = save_article_locally(article, full_content)
-    print(f"記事をローカルに保存しました: {filepath}")
+    log(f"記事をローカルに保存しました: {filepath}")
+
+    result = {
+        "title": article["title"],
+        "category": article.get("category", ""),
+        "char_count": _content_char_count(full_content),
+        "local_path": filepath,
+        "wp_link": None,
+        "error": None,
+    }
 
     try:
         category_id = resolve_category_id(article.get("category", ""), categories)
-        link = post_to_wordpress_draft(article["title"], full_content, category_id)
-        print(f"WordPressに下書き保存しました: {link}")
+
+        featured_media_id = None
+        if include_featured_image and amazon_keyword:
+            try:
+                image_url = fetch_unsplash_image_url(amazon_keyword)
+                if image_url:
+                    featured_media_id = upload_featured_image(image_url, article["title"][:40])
+            except Exception as exc:
+                log(f"アイキャッチ画像の設定に失敗しました(画像なしで投稿します): {exc}")
+
+        link = post_to_wordpress_draft(
+            article["title"], full_content, category_id, featured_media_id
+        )
+        log(f"WordPressに下書き保存しました: {link}")
+        result["wp_link"] = link
     except Exception as exc:
-        print(f"WordPressへの下書き保存に失敗しました(ローカルfiles保存のみ完了): {exc}", file=sys.stderr)
+        log(f"WordPressへの下書き保存に失敗しました(ローカル保存のみ完了): {exc}")
+        result["error"] = str(exc)
+
+    return result
+
+
+def main() -> None:
+    topic = sys.argv[1] if len(sys.argv) > 1 else None
+    run_pipeline(topic=topic)
 
 
 if __name__ == "__main__":

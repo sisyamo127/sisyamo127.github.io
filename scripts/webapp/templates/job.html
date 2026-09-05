@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>記事生成中...</title>
+<style>
+  body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; color: #333; }
+  #logs { background: #111; color: #0f0; padding: 16px; border-radius: 8px; min-height: 120px; white-space: pre-wrap; font-family: monospace; font-size: 0.85rem; }
+  a { color: #0066cc; }
+  .back { display: inline-block; margin-top: 20px; }
+</style>
+</head>
+<body>
+  <h1>記事生成の状況</h1>
+  <p id="status">状態: 実行中...</p>
+  <div id="logs"></div>
+  <div id="result"></div>
+  <a class="back" href="/">&laquo; トップに戻る</a>
+
+<script>
+const jobId = "{{ job_id }}";
+const statusEl = document.getElementById("status");
+const logsEl = document.getElementById("logs");
+const resultEl = document.getElementById("result");
+
+async function poll() {
+  const res = await fetch(`/jobs/${jobId}/data`);
+  const data = await res.json();
+  logsEl.textContent = data.logs.join("\n");
+
+  if (data.status === "done") {
+    statusEl.textContent = "状態: 完了";
+    const r = data.result;
+    let html = `<p><strong>${r.title}</strong>(カテゴリー: ${r.category} / ${r.char_count}文字)</p>`;
+    if (r.wp_link) {
+      html += `<p><a href="${r.wp_link}" target="_blank">WordPressの下書きを開く</a></p>`;
+    }
+    resultEl.innerHTML = html;
+    return;
+  }
+  if (data.status === "error") {
+    statusEl.textContent = "状態: エラー";
+    resultEl.innerHTML = `<p style="color:#c00;">${data.error}</p>`;
+    return;
+  }
+  setTimeout(poll, 2000);
+}
+poll();
+</script>
+</body>
+</html>

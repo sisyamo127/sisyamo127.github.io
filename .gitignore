@@ -1,3 +1,4 @@
 .env
 articles/
 __pycache__/
+scripts/webapp/history.json
