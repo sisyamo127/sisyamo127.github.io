@@ -77,6 +77,12 @@ def post_to_wordpress(title: str, content: str) -> None:
     response = requests.post(
         f"{wp_url}/wp-json/wp/v2/posts",
         auth=(username, app_password),
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        },
         json={"title": title, "content": content, "status": "publish"},
         timeout=60,
     )
