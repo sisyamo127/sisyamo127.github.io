@@ -52,7 +52,13 @@ def generate_article() -> tuple[str, str]:
         timeout=120,
     )
     response.raise_for_status()
-    text = response.json()["content"][0]["text"].strip()
+    content_blocks = response.json()["content"]
+    text_block = next(
+        (block for block in content_blocks if block.get("type") == "text"), None
+    )
+    if text_block is None:
+        raise ValueError(f"テキスト形式のレスポンスが見つかりませんでした: {content_blocks}")
+    text = text_block["text"].strip()
 
     # コードブロックで囲まれて返ってきた場合に備えて中身だけ取り出す
     match = re.search(r"\{.*\}", text, re.DOTALL)
