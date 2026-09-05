@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>おもちゃミュージアム記事生成ツール</title>
+<style>
+  body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 16px; color: #333; }
+  h1 { font-size: 1.4rem; }
+  form { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 32px; }
+  label { display: block; margin-top: 12px; font-weight: bold; }
+  input[type=text], select { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+  .checkbox-row { margin-top: 12px; font-weight: normal; display: flex; align-items: center; gap: 6px; }
+  button { margin-top: 20px; background: #ff6600; color: #fff; border: none; padding: 10px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { border: 1px solid #ddd; padding: 8px; font-size: 0.9rem; text-align: left; }
+  th { background: #f5f5f5; }
+  a { color: #0066cc; }
+</style>
+</head>
+<body>
+  <h1>おもちゃミュージアム 記事生成ツール</h1>
+
+  <form action="/generate" method="post">
+    <label for="topic">テーマ(空欄ならAIにお任せ)</label>
+    <input type="text" id="topic" name="topic" placeholder="例: 冬におすすめの外遊びおもちゃ">
+
+    <label for="category">カテゴリー(空欄ならAIが選択)</label>
+    <select id="category" name="category">
+      <option value="">(AIにお任せ)</option>
+      {% for c in categories %}
+      <option value="{{ c }}">{{ c }}</option>
+      {% endfor %}
+    </select>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="include_amazon" name="include_amazon" checked>
+      <label for="include_amazon" style="margin:0;font-weight:normal;">Amazon商品紹介を含める</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="include_image" name="include_image" checked>
+      <label for="include_image" style="margin:0;font-weight:normal;">アイキャッチ画像を自動設定する(Unsplash)</label>
+    </div>
+
+    <button type="submit">記事を生成</button>
+  </form>
+
+  <h2>生成履歴</h2>
+  {% if history %}
+  <table>
+    <tr><th>日時</th><th>タイトル</th><th>カテゴリー</th><th>文字数</th><th>WordPress</th></tr>
+    {% for item in history %}
+    <tr>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.title }}</td>
+      <td>{{ item.category }}</td>
+      <td>{{ item.char_count }}</td>
+      <td>
+        {% if item.wp_link %}
+        <a href="{{ item.wp_link }}" target="_blank">下書きを開く</a>
+        {% elif item.error %}
+        <span style="color:#c00;">失敗: {{ item.error }}</span>
+        {% else %}
+        -
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>まだ記事は生成されていません。</p>
+  {% endif %}
+</body>
+</html>
