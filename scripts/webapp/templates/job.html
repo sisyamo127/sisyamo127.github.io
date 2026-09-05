@@ -1,21 +1,14 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<title>記事生成中...</title>
-<style>
-  body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; color: #333; }
-  #logs { background: #111; color: #0f0; padding: 16px; border-radius: 8px; min-height: 120px; white-space: pre-wrap; font-family: monospace; font-size: 0.85rem; }
-  a { color: #0066cc; }
-  .back { display: inline-block; margin-top: 20px; }
-</style>
-</head>
-<body>
-  <h1>記事生成の状況</h1>
+{% extends "base.html" %}
+{% block title %}生成中... | おもちゃミュージアム{% endblock %}
+{% block heading %}記事生成の状況{% endblock %}
+{% block content %}
+
+<div class="card" style="max-width:640px;">
   <p id="status">状態: 実行中...</p>
-  <div id="logs"></div>
-  <div id="result"></div>
-  <a class="back" href="/">&laquo; トップに戻る</a>
+  <div id="logs" style="background:#111;color:#0f0;padding:16px;border-radius:8px;min-height:100px;white-space:pre-wrap;font-family:monospace;font-size:0.82rem;"></div>
+  <div id="result" style="margin-top:16px;"></div>
+  <a class="link" href="/" style="display:inline-block;margin-top:20px;">&laquo; ホームに戻る</a>
+</div>
 
 <script>
 const jobId = "{{ job_id }}";
@@ -33,7 +26,7 @@ async function poll() {
     const r = data.result;
     let html = `<p><strong>${r.title}</strong>(カテゴリー: ${r.category} / ${r.char_count}文字)</p>`;
     if (r.wp_link) {
-      html += `<p><a href="${r.wp_link}" target="_blank">WordPressの下書きを開く</a></p>`;
+      html += `<p><a class="link" href="${r.wp_link}" target="_blank">WordPressの下書きを開く</a></p>`;
     }
     resultEl.innerHTML = html;
     return;
@@ -47,5 +40,5 @@ async function poll() {
 }
 poll();
 </script>
-</body>
-</html>
+
+{% endblock %}

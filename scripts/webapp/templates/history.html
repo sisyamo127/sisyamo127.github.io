@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}履歴 | おもちゃミュージアム{% endblock %}
+{% block heading %}履歴{% endblock %}
+{% block content %}
+
+<div class="card">
+  <input type="text" id="searchBox" placeholder="タイトル・カテゴリーで検索..." style="margin-bottom:16px;">
+  {% if history %}
+  <table id="historyTable">
+    <tr><th>日時</th><th>タイトル</th><th>カテゴリー</th><th>文字数</th><th>状態</th></tr>
+    {% for item in history %}
+    <tr>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.title }}</td>
+      <td>{{ item.category }}</td>
+      <td>{{ item.char_count }}</td>
+      <td>
+        {% if item.wp_link %}
+        <a class="link" href="{{ item.wp_link }}" target="_blank">下書きを開く</a>
+        {% elif item.error %}
+        <span class="badge ng" title="{{ item.error }}">失敗</span>
+        {% else %}
+        -
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">まだ記事がありません。</div>
+  {% endif %}
+</div>
+
+<script>
+document.getElementById("searchBox").addEventListener("input", function () {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll("#historyTable tr:not(:first-child)").forEach(function (row) {
+    row.style.display = row.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
+});
+</script>
+
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}連携状況 | おもちゃミュージアム{% endblock %}
+{% block heading %}連携状況{% endblock %}
+{% block content %}
+
+<div class="card">
+  <table>
+    <tr><th>サービス</th><th>状態</th><th>詳細</th></tr>
+    {% for s in services %}
+    <tr>
+      <td>{{ s.name }}</td>
+      <td>
+        {% if s.status == 'ok' %}
+        <span class="badge ok">OK</span>
+        {% elif s.status == 'warn' %}
+        <span class="badge warn">未設定</span>
+        {% else %}
+        <span class="badge ng">エラー</span>
+        {% endif %}
+      </td>
+      <td style="color:#6b7280;">{{ s.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card" style="margin-top:16px;color:#6b7280;font-size:0.85rem;">
+  APIキーの値そのものは表示されません。設定または修正は <code>scripts/.env</code> ファイルを編集してください。
+</div>
+
+{% endblock %}
