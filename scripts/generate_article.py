@@ -29,18 +29,38 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-sonnet-5"
 
-ARTICLE_PROMPT = """あなたはおもちゃ専門ブログのライターです。おもちゃに関するブログ記事を1本作成してください。
+ARTICLE_PROMPT = """あなたは経験豊富なプロブロガー兼SEOライターです。おもちゃ専門ブログの記事を1本作成してください。
 テーマは自由に決めてください(新作トイのレビュー、レトロトイの魅力、知育玩具の選び方、DIYおもちゃ、
 コレクター向け情報、プレゼント選びのコツなど、おもちゃに関する範囲内で、毎回異なる話題にしてください)。
 
-SEOを意識し、必ず次のJSON形式のみで返してください。JSON以外の文章やコードブロックの記号は含めないでください。
+## 文体・トーン
+- 「です・ます調」で、丁寧で優しい雰囲気にする
+- 読者の悩みへの共感 → 具体的な解決策・情報提供 → まとめ、という一般的なプロブロガーの構成を意識する
+- SEOを意識し、検索されやすいキーワードを自然に本文へ盛り込む
+- アフィリエイト記事として成立するよう、紹介する商品への興味を高める文章にする
+
+## 文字数・構成
+- 本文(content)は5000文字以上
+- 導入文 → 複数の見出し(h2/h3)によるセクション → まとめ、という構成にする
+
+## 装飾(デザイン)
+本文のHTML内で、以下のような装飾を適宜使ってください(インラインstyleで指定すること。WordPressの投稿にそのまま貼り付けるため、外部CSSには依存しないこと):
+- 重要な語句は <strong> で太字にする
+- 特に注目してほしい箇所は <span style="color:#e63946;font-weight:bold;">のように強調色をつける
+- 「ポイント」「まとめ」などは背景色付きのボックスにする。例:
+  <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:16px;margin:16px 0;border-radius:4px;"><strong>ポイント</strong><br>ここに内容</div>
+- 比較や一覧が適切な場面ではtable要素も使ってよい
+
+## 出力形式
+必ず次のJSON形式のみで返してください。JSON以外の文章やコードブロックの記号は含めないでください。
 
 {
   "title": "記事タイトル(検索されやすいキーワードを含む、32文字程度)",
   "meta_description": "検索結果に表示される説明文(120文字程度)",
   "keywords": ["SEOキーワード1", "SEOキーワード2", "SEOキーワード3"],
+  "category": "この記事に最も合うWordPressのカテゴリー名(自由に決めてよい)",
   "amazon_search_keyword": "記事に関連する商品をAmazonで探すための検索キーワード(具体的な商品カテゴリ名、日本語)",
-  "content": "<h2>...</h2><p>...</p> 形式のHTML本文。見出し(h2/h3)を使い、1000文字程度"
+  "content": "上記の文体・構成・装飾を反映したHTML本文(5000文字以上)"
 }
 """
 
@@ -58,7 +78,7 @@ def generate_article() -> dict:
         },
         json={
             "model": model,
-            "max_tokens": 2000,
+            "max_tokens": 8000,
             "messages": [{"role": "user", "content": ARTICLE_PROMPT}],
         },
         timeout=120,
@@ -126,6 +146,7 @@ def save_article(article: dict, product_html: str) -> str:
     html = f"""<!-- title: {article['title']} -->
 <!-- meta description: {article.get('meta_description', '')} -->
 <!-- keywords: {keywords_line} -->
+<!-- category: {article.get('category', '')} -->
 
 <h1>{article['title']}</h1>
 {article['content']}
