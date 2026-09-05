@@ -74,11 +74,18 @@ def build_article_prompt(categories: list) -> str:
 【】で始まる、具体的で読者の悩みに刺さるフックタイトルにする。
 例:「【福岡空港お土産】出張パパ必見!子どもが喜ぶおもちゃまとめ」「【年齢別】知育玩具の選び方完全ガイド」
 
-## 冒頭の会話導入
-記事の最初に、悩みを持つ読者と「ゆう」が掛け合いをする設定を作る。
-- reader_persona: 読者役の短いラベル(例:「読者(プレゼントに悩むママ)」「読者(出張中のパパ)」)
-- reader_question: その読者の悩み・質問(1〜2文)
-- yu_answer: 「ゆう」の返答(1〜2文、絵文字を使ってよい、親しみやすいトーン)
+## 会話パート(3箇所)
+記事には、悩みを持つ読者と「ゆう」が掛け合いをする会話を**冒頭・中盤・最後の3箇所**に入れる。
+- reader_persona: 読者役の短いラベル(例:「読者(プレゼントに悩むママ)」「読者(出張中のパパ)」)。冒頭・中盤で共通して使う
+- reader_question: 冒頭での読者の悩み・質問(1〜2文)
+- yu_answer: 冒頭での「ゆう」の返答(1〜2文、絵文字を使ってよい、親しみやすいトーン)
+- mid_question: 記事の内容を踏まえた、中盤での読者の追加の疑問(1文程度。例:「じゃあ結局どれがいいの?」)
+- mid_answer: 中盤での「ゆう」の返答(1〜2文)
+- closing_comment: 記事の最後に「ゆう」だけが読者に語りかける、まとめの一言・応援コメント(1〜2文、絵文字を使ってよい)
+
+本文(content)の中で、中盤の会話を入れるのにちょうど良い位置(だいたい本文の半分あたり、話題の区切りが良いところ)に、
+プレースホルダーとして `[[MID_CONVERSATION]]` という文字列だけを1箇所挿入すること(この文字列は後で会話ブロックに
+置き換えるので、他の文章とは改行で区切ること)。
 
 ## 文体・トーン(本文)
 - 「です・ます調」で、丁寧で優しい雰囲気にする
@@ -86,9 +93,10 @@ def build_article_prompt(categories: list) -> str:
 - SEOを意識し、検索されやすいキーワードを自然に本文へ盛り込む
 - アフィリエイト記事として成立するよう、紹介する商品への興味を高める文章にする
 
-## 文字数・構成
-- 本文(content)は5000文字以上
-- <h2>から始めること(タイトルや冒頭の会話は含めない。それらは別途組み立てるため)
+## 文字数・構成(重要)
+- 本文(content)は**必ず5000文字以上**にすること。4000文字程度では不足なので、必ず超えるように書くこと
+- 目安として、h2見出しを5〜7個程度用意し、それぞれの見出しの下に400〜600文字程度の解説を書くと5000文字を超えやすい
+- <h2>から始めること(タイトルや会話パートは含めない。それらは別途組み立てるため)
 - 複数の見出し(h2/h3)によるセクション → まとめ、という構成にする
 
 ## 装飾(デザイン)
@@ -112,15 +120,22 @@ def build_article_prompt(categories: list) -> str:
   "keywords": ["SEOキーワード1", "SEOキーワード2", "SEOキーワード3"],
   "category": "上のカテゴリー一覧から選んだ1つ",
   "reader_persona": "読者役の短いラベル",
-  "reader_question": "読者の悩み・質問",
-  "yu_answer": "ゆうの返答",
+  "reader_question": "冒頭の読者の悩み・質問",
+  "yu_answer": "冒頭のゆうの返答",
+  "mid_question": "中盤の読者の追加の疑問",
+  "mid_answer": "中盤のゆうの返答",
+  "closing_comment": "最後のゆうのまとめ・応援コメント",
   "amazon_search_keyword": "記事に関連する商品をAmazonで探すための検索キーワード(具体的な商品カテゴリ名、日本語)",
-  "content": "h2から始まる本文HTML(5000文字以上)"
+  "content": "h2から始まる本文HTML(5000文字以上、途中に[[MID_CONVERSATION]]を1箇所含む)"
 }}
 """
 
 
-def generate_article(categories: list) -> dict:
+MIN_CONTENT_CHARS = 5000
+
+
+def _call_claude(messages: list) -> tuple[str, dict]:
+    """Claudeを呼び出し、(テキスト全文, パース済みJSON)を返す。"""
     api_key = os.environ["ANTHROPIC_API_KEY"]
     model = os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
 
@@ -133,10 +148,10 @@ def generate_article(categories: list) -> dict:
         },
         json={
             "model": model,
-            "max_tokens": 8000,
-            "messages": [{"role": "user", "content": build_article_prompt(categories)}],
+            "max_tokens": 12000,
+            "messages": messages,
         },
-        timeout=120,
+        timeout=180,
     )
     response.raise_for_status()
     content_blocks = response.json()["content"]
@@ -151,11 +166,46 @@ def generate_article(categories: list) -> dict:
     if not match:
         raise ValueError(f"JSON形式のレスポンスを取得できませんでした: {text}")
 
-    return json.loads(match.group(0))
+    return text, json.loads(match.group(0))
 
 
-def build_intro_balloon_html(persona: str, question: str, answer: str) -> str:
-    """「ゆう」との会話導入(Cocoonのふきだしブロック相当)を組み立てる。"""
+def _content_char_count(content: str) -> int:
+    """本文HTMLからタグを除いた文字数を数える。"""
+    text = re.sub(r"<[^>]+>", "", content)
+    return len(text.strip())
+
+
+def generate_article(categories: list, max_expand_attempts: int = 2) -> dict:
+    messages = [{"role": "user", "content": build_article_prompt(categories)}]
+    raw_text, article = _call_claude(messages)
+
+    for _ in range(max_expand_attempts):
+        char_count = _content_char_count(article.get("content", ""))
+        if char_count >= MIN_CONTENT_CHARS:
+            break
+
+        print(
+            f"本文が{char_count}文字と{MIN_CONTENT_CHARS}文字未満のため、追記を依頼します...",
+            file=sys.stderr,
+        )
+        messages.append({"role": "assistant", "content": raw_text})
+        messages.append({
+            "role": "user",
+            "content": (
+                f"content(本文)が現在{char_count}文字しかありません。"
+                f"{MIN_CONTENT_CHARS}文字以上になるよう、既存の内容を薄めず、具体例・詳細な説明・"
+                "追加のセクション(h2/h3)を加えて拡張してください。"
+                "他のフィールド(title, meta_description等)も含め、同じJSON形式で全文を出力し直してください。"
+                "[[MID_CONVERSATION]]のプレースホルダーは1箇所のまま維持してください。"
+            ),
+        })
+        raw_text, article = _call_claude(messages)
+
+    return article
+
+
+def build_conversation_balloon_html(persona: str, question: str, answer: str) -> str:
+    """読者と「ゆう」の会話(Cocoonのふきだしブロック相当)を組み立てる。冒頭・中盤で使用。"""
     return f"""<div style="border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin:16px 0;background:#fafafa;">
 <p style="margin:0 0 12px;"><strong>{persona}</strong><br>{question}</p>
 <div style="display:flex;align-items:flex-start;gap:12px;">
@@ -163,6 +213,16 @@ def build_intro_balloon_html(persona: str, question: str, answer: str) -> str:
 <div style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px 14px;">
 <strong>ゆう</strong><br>{answer}
 </div>
+</div>
+</div>"""
+
+
+def build_yu_comment_html(comment: str) -> str:
+    """記事末尾の「ゆう」単独のまとめコメントを組み立てる。"""
+    return f"""<div style="display:flex;align-items:flex-start;gap:12px;margin:24px 0;">
+<img src="{YU_AVATAR_URL}" alt="ゆう" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex-shrink:0;">
+<div style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px 14px;">
+<strong>ゆう</strong><br>{comment}
 </div>
 </div>"""
 
@@ -271,11 +331,23 @@ def main() -> None:
     article = generate_article(categories)
     print(f"生成された記事タイトル: {article['title']}")
 
-    intro_html = build_intro_balloon_html(
-        article.get("reader_persona", "読者"),
-        article.get("reader_question", ""),
-        article.get("yu_answer", ""),
+    persona = article.get("reader_persona", "読者")
+    intro_html = build_conversation_balloon_html(
+        persona, article.get("reader_question", ""), article.get("yu_answer", "")
     )
+    mid_html = build_conversation_balloon_html(
+        persona, article.get("mid_question", ""), article.get("mid_answer", "")
+    )
+    closing_html = build_yu_comment_html(article.get("closing_comment", ""))
+
+    body = article["content"]
+    if "[[MID_CONVERSATION]]" in body:
+        body = body.replace("[[MID_CONVERSATION]]", mid_html)
+    else:
+        # モデルがプレースホルダーを出力しなかった場合は本文中央付近に挿入する
+        midpoint = len(body) // 2
+        insert_at = body.find("<h2", midpoint) if body.find("<h2", midpoint) != -1 else midpoint
+        body = body[:insert_at] + mid_html + body[insert_at:]
 
     product_html = ""
     amazon_keyword = article.get("amazon_search_keyword")
@@ -292,8 +364,8 @@ def main() -> None:
             product_html = build_amazon_search_button_html(amazon_keyword)
 
     full_content = (
-        f"{intro_html}\n\n{article['content']}\n\n"
-        f"<h2>おすすめ商品</h2>\n{product_html}"
+        f"{intro_html}\n\n{body}\n\n"
+        f"<h2>おすすめ商品</h2>\n{product_html}\n\n{closing_html}"
     )
 
     filepath = save_article_locally(article, full_content)
