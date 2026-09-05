@@ -80,7 +80,10 @@ def post_to_wordpress(title: str, content: str) -> None:
         json={"title": title, "content": content, "status": "publish"},
         timeout=60,
     )
-    response.raise_for_status()
+    if not response.ok:
+        raise RuntimeError(
+            f"WordPressへの投稿に失敗しました (HTTP {response.status_code}): {response.text}"
+        )
     post = response.json()
     print(f"投稿完了: {post.get('link', post.get('id'))}")
 
