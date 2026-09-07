@@ -360,10 +360,18 @@ SEOで狙うキーワード:「{target_keyword}」
 5〜7個の見出し(h2)を考え、それぞれ何を書くかの概要(1〜2文)を添えてください。
 全体で本文5000文字以上になるボリューム感を意識すること。
 
+## 記事内で紹介する商品(2〜3個)
+アウトラインの中から、具体的な商品を紹介するのにふさわしい見出しを2〜3個選び、
+それぞれで紹介する商品(product_mentions)を考えてください。
+- heading: 紹介する箇所の見出し(上のoutlineのheadingと同じ文字列にすること)
+- name: 紹介する商品の名前・種類(例:「木製の型はめパズル」)
+- search_keyword: その商品をAmazonで検索するための具体的なキーワード(日本語)
+
 必ず次のJSON形式のみで返してください。他の文章は含めないこと。
 
 {{
   "title": "{title}",
+  "seo_title": "検索エンジン向けのSEOタイトル(全角32文字以内。titleと同じでよいが、32文字を超える場合はここで短縮する)",
   "meta_description": "検索結果に表示される説明文(120文字程度)",
   "keywords": ["SEOキーワード1", "SEOキーワード2", "SEOキーワード3"],
   "category": "選んだカテゴリー",
@@ -373,9 +381,12 @@ SEOで狙うキーワード:「{target_keyword}」
   "mid_question": "中盤の読者の追加の疑問",
   "mid_answer": "中盤のゆうの返答",
   "closing_comment": "最後のゆうのまとめ・応援コメント",
-  "amazon_search_keyword": "記事に関連する商品をAmazonで探すための検索キーワード(具体的な商品カテゴリ名、日本語)",
+  "amazon_search_keyword": "記事全体を総括するおすすめ商品をAmazonで探すための検索キーワード(具体的な商品カテゴリ名、日本語)",
   "outline": [
     {{"heading": "見出し1", "summary": "このセクションで書く内容の概要"}}
+  ],
+  "product_mentions": [
+    {{"heading": "見出し1", "name": "商品名・種類", "search_keyword": "Amazon検索キーワード"}}
   ]
 }}
 """
@@ -388,6 +399,22 @@ def build_content_prompt_from_outline(outline: dict) -> str:
         f"- {o['heading']}: {o['summary']}" for o in outline.get("outline", [])
     )
     keywords = "、".join(outline.get("keywords", []))
+    product_mentions = outline.get("product_mentions", [])
+    if product_mentions:
+        product_lines = "\n".join(
+            f'- 見出し「{p["heading"]}」の中で「{p["name"]}」に触れたすぐ後に '
+            f'`[[PRODUCT:{i}]]` というプレースホルダーを1つ挿入すること'
+            for i, p in enumerate(product_mentions)
+        )
+        product_instruction = f"""
+## 商品紹介プレースホルダー(重要)
+以下の商品について本文中で触れ、触れた直後にプレースホルダーを挿入してください(このプレースホルダーは
+後で商品カードのHTMLに置き換えるので、他の文章とは改行で区切ること):
+{product_lines}
+"""
+    else:
+        product_instruction = ""
+
     return f"""あなたは「おもちゃミュージアム」というブログの専属ライターです。
 以下の承認済み構成案に沿って、記事本文を執筆してください。構成案の見出し・流れは変更しないこと。
 
@@ -397,6 +424,7 @@ SEOキーワード: {keywords}
 
 ## 構成案(この通りの見出し・順序で書くこと)
 {outline_lines}
+{product_instruction}
 
 ## 文体・トーン
 - 「です・ます調」で、丁寧で優しい雰囲気にする
@@ -509,6 +537,56 @@ def build_amazon_search_button_html(keyword: str) -> str:
 </div>"""
 
 
+def build_inline_product_card_html(name: str, search_keyword: str, log=DEFAULT_LOG) -> str:
+    """本文中に挿入する、1商品ぶんの小さな紹介カード(画像+購入リンク)を組み立てる。
+
+    Amazon Creators APIで実商品が取れればその画像・リンクを使い、
+    取れない場合はUnsplashの画像(あれば)+Amazon検索リンクにフォールバックする。
+    """
+    try:
+        products = search_amazon_products(search_keyword, item_count=1)
+        for product in products:
+            try:
+                title_text = product.item_info.title.display_value
+                url = product.detail_page_url
+                image_url = product.images.primary.large.url
+                return f"""<div style="border:1px solid #ddd;border-radius:10px;padding:12px;margin:16px 0;display:flex;gap:12px;align-items:center;background:#fafafa;">
+<img src="{image_url}" alt="{title_text}" style="width:90px;height:90px;object-fit:contain;flex-shrink:0;border-radius:6px;background:#fff;">
+<div style="flex:1;min-width:160px;">
+<p style="font-weight:bold;margin:0 0 8px;font-size:0.92rem;">{title_text}</p>
+<a rel="nofollow noopener sponsored" href="{url}" target="_blank" style="display:inline-block;background:#ff6600;color:#fff;font-weight:700;padding:6px 16px;border-radius:6px;text-decoration:none;font-size:0.85rem;">▶ Amazonで見る</a>
+</div>
+</div>"""
+            except AttributeError:
+                continue
+    except Exception as exc:
+        log(f"商品「{name}」のAmazon検索に失敗しました(画像リンクにフォールバックします): {exc}")
+
+    image_url = None
+    try:
+        image_url = fetch_unsplash_image_url(search_keyword)
+    except Exception as exc:
+        log(f"商品「{name}」の画像取得に失敗しました: {exc}")
+
+    tag = os.environ.get("AMAZON_ASSOCIATE_TAG", "")
+    query = urllib.parse.quote(search_keyword)
+    search_url = f"https://www.amazon.co.jp/s?k={query}"
+    if tag:
+        search_url += f"&tag={urllib.parse.quote(tag)}"
+
+    image_html = (
+        f'<img src="{image_url}" alt="{name}" style="width:90px;height:90px;object-fit:cover;flex-shrink:0;border-radius:6px;">'
+        if image_url else ""
+    )
+    return f"""<div style="border:1px solid #ddd;border-radius:10px;padding:12px;margin:16px 0;display:flex;gap:12px;align-items:center;background:#fafafa;">
+{image_html}
+<div style="flex:1;min-width:160px;">
+<p style="font-weight:bold;margin:0 0 8px;font-size:0.92rem;">{name}</p>
+<a rel="nofollow noopener sponsored" href="{search_url}" target="_blank" style="display:inline-block;background:#ff6600;color:#fff;font-weight:700;padding:6px 16px;border-radius:6px;text-decoration:none;font-size:0.85rem;">▶ Amazonで「{name}」を探す</a>
+</div>
+</div>"""
+
+
 def resolve_category_id(category_name: str, categories: list) -> int | None:
     for c in categories:
         if c["name"] == category_name:
@@ -601,8 +679,9 @@ def save_article_locally(article: dict, full_content: str) -> str:
 
     keywords_line = ", ".join(article.get("keywords", []))
     html = f"""<!-- title: {article['title']} -->
-<!-- meta description: {article.get('meta_description', '')} -->
-<!-- keywords: {keywords_line} -->
+<!-- seo_title(Cocoon SEOボックスの「SEOタイトル」欄に貼り付け): {article.get('seo_title', article['title'])} -->
+<!-- meta description(Cocoon SEOボックスの「メタディスクリプション」欄に貼り付け): {article.get('meta_description', '')} -->
+<!-- keywords(Cocoon SEOボックスの「メタキーワード」欄に貼り付け): {keywords_line} -->
 <!-- category: {article.get('category', '')} -->
 
 {full_content}"""
@@ -641,6 +720,17 @@ def finalize_and_publish(
         insert_at = body.find("<h2", midpoint) if body.find("<h2", midpoint) != -1 else midpoint
         body = body[:insert_at] + mid_html + body[insert_at:]
 
+    if include_amazon:
+        for i, mention in enumerate(article.get("product_mentions", [])):
+            placeholder = f"[[PRODUCT:{i}]]"
+            if placeholder in body:
+                card_html = build_inline_product_card_html(
+                    mention.get("name", ""), mention.get("search_keyword", ""), log=log
+                )
+                body = body.replace(placeholder, card_html)
+    # 残ったプレースホルダー(件数不一致等)は表示に影響しないよう除去する
+    body = re.sub(r"\[\[PRODUCT:\d+\]\]", "", body)
+
     product_html = ""
     amazon_keyword = article.get("amazon_search_keyword")
     if include_amazon and amazon_keyword:
@@ -660,6 +750,9 @@ def finalize_and_publish(
 
     result = {
         "title": article["title"],
+        "seo_title": article.get("seo_title", article["title"]),
+        "meta_description": article.get("meta_description", ""),
+        "keywords": article.get("keywords", []),
         "category": article.get("category", ""),
         "char_count": _content_char_count(full_content),
         "local_path": filepath,

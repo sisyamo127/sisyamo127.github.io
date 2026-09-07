@@ -28,6 +28,13 @@ async function poll() {
     if (r.wp_link) {
       html += `<p><a class="link" href="${r.wp_link}" target="_blank">WordPressの下書きを開く</a></p>`;
     }
+    html += `
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-top:14px;font-size:0.85rem;">
+        <p style="margin:0 0 6px;color:#6b7280;">Cocoonの「SEO」ボックスに貼り付けてください:</p>
+        <p style="margin:0 0 4px;"><strong>SEOタイトル:</strong> ${r.seo_title || r.title}</p>
+        <p style="margin:0 0 4px;"><strong>メタディスクリプション:</strong> ${r.meta_description || ""}</p>
+        <p style="margin:0;"><strong>メタキーワード:</strong> ${(r.keywords || []).join(", ")}</p>
+      </div>`;
     resultEl.innerHTML = html;
     return;
   }
