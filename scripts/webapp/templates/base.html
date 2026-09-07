@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>{% block title %}おもちゃミュージアム 記事生成ツール{% endblock %}</title>
+<style>
+  :root {
+    --accent: #ff6600;
+    --sidebar-bg: #16213e;
+    --sidebar-active: #1f2d5c;
+    --page-bg: #eef2f8;
+    --card-bg: #ffffff;
+    --text: #1a1a2e;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Segoe UI", sans-serif;
+    background: var(--page-bg);
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+  }
+  .sidebar {
+    width: 220px;
+    background: var(--sidebar-bg);
+    color: #cbd5e1;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    padding: 20px 0;
+  }
+  .sidebar .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 20px 20px;
+    font-weight: bold;
+    color: #fff;
+    font-size: 1.05rem;
+    border-bottom: 1px solid #2a3a6a;
+    margin-bottom: 12px;
+  }
+  .sidebar a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    color: #cbd5e1;
+    text-decoration: none;
+    font-size: 0.92rem;
+  }
+  .sidebar a.active {
+    background: var(--sidebar-active);
+    color: #fff;
+    border-left: 3px solid var(--accent);
+  }
+  .sidebar a:hover { background: #1f2d5c; color: #fff; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar {
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .topbar h1 { font-size: 1.1rem; margin: 0; }
+  .content { padding: 28px; flex: 1; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .card + .card { margin-top: 20px; }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+  }
+  .stat-card .label { color: var(--muted); font-size: 0.82rem; }
+  .stat-card .value { font-size: 1.6rem; font-weight: bold; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; font-size: 0.88rem; text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+  a.link { color: #0066cc; text-decoration: none; }
+  a.link:hover { text-decoration: underline; }
+  .btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 10px 22px;
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+  .btn.secondary { background: #fff; color: var(--text); border: 1px solid var(--border); }
+  label { display: block; margin-top: 14px; font-weight: 600; font-size: 0.88rem; }
+  input[type=text], select {
+    width: 100%; padding: 9px 10px; margin-top: 5px; box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem;
+  }
+  .checkbox-row { margin-top: 12px; font-weight: normal; display: flex; align-items: center; gap: 6px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; }
+  .badge.ok { background: #d1fae5; color: #047857; }
+  .badge.ng { background: #fee2e2; color: #b91c1c; }
+  .badge.warn { background: #fef3c7; color: #92400e; }
+  .empty { color: var(--muted); padding: 20px 0; }
+</style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="brand">🧸 おもちゃミュージアム</div>
+    <a href="/" class="{{ 'active' if active == 'home' else '' }}">🏠 ホーム</a>
+    <a href="/generate" class="{{ 'active' if active == 'generate' else '' }}">✏️ 記事生成</a>
+    <a href="/history" class="{{ 'active' if active == 'history' else '' }}">📄 履歴</a>
+    <a href="/status" class="{{ 'active' if active == 'status' else '' }}">🔌 連携状況</a>
+  </div>
+  <div class="main">
+    <div class="topbar">
+      <h1>{% block heading %}{% endblock %}</h1>
+    </div>
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</body>
+</html>

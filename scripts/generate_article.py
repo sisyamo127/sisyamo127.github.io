@@ -191,16 +191,11 @@ def _content_char_count(content: str) -> int:
     return len(text.strip())
 
 
-def generate_article(
-    categories: list,
-    topic: str | None = None,
-    category: str | None = None,
-    max_expand_attempts: int = 2,
-    log=lambda msg: print(msg, file=sys.stderr),
-) -> dict:
-    messages = [
-        {"role": "user", "content": build_article_prompt(categories, topic, category)}
-    ]
+DEFAULT_LOG = lambda msg: print(msg, file=sys.stderr)  # noqa: E731
+
+
+def _generate_with_expansion(messages: list, max_expand_attempts: int = 2, log=DEFAULT_LOG) -> dict:
+    """contentが5000文字未満なら追記を依頼し、条件を満たすまで(最大max_expand_attempts回)繰り返す。"""
     raw_text, article = _call_claude(messages)
 
     for _ in range(max_expand_attempts):
@@ -222,6 +217,223 @@ def generate_article(
         })
         raw_text, article = _call_claude(messages)
 
+    return article
+
+
+def generate_article(
+    categories: list,
+    topic: str | None = None,
+    category: str | None = None,
+    max_expand_attempts: int = 2,
+    log=DEFAULT_LOG,
+) -> dict:
+    messages = [
+        {"role": "user", "content": build_article_prompt(categories, topic, category)}
+    ]
+    return _generate_with_expansion(messages, max_expand_attempts, log)
+
+
+# ---------------------------------------------------------------------------
+# タイトル案生成 → SEOチェック → アウトライン生成 → アウトラインに沿った本文生成
+# ---------------------------------------------------------------------------
+
+TITLE_SEO_RULES = [
+    "文字数: 全角28〜32文字程度(検索結果で見切れやすい極端な長短を避ける)",
+    "キーワード配置: target_keywordがタイトルの前半(できれば最初の15文字程度)に含まれている",
+    "重複・カニバリ回避: 既存記事タイトルと内容的に重複していない",
+    "具体性: 「おすすめ」「まとめ」など抽象的な言葉だけで終わらず、具体的な切り口(年齢・シーン・数字等)がある",
+    "誇大表現の回避: 「絶対」「100%」等の断定的・誇大な表現を使っていない",
+]
+
+
+def fetch_existing_titles(limit: int = 50) -> list:
+    """カニバリ確認用に、サイトに既存の公開記事タイトルを取得する。"""
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    response = requests.get(
+        f"{wp_url}/wp-json/wp/v2/posts",
+        params={"per_page": limit, "_fields": "title"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return [p["title"]["rendered"] for p in response.json()]
+
+
+def generate_title_candidates(
+    categories: list, topic: str | None = None, count: int = 10, log=DEFAULT_LOG
+) -> list:
+    """SEOを意識したタイトル候補をcount個生成する。"""
+    if topic:
+        topic_instruction = f"テーマは必ず次の内容にすること:「{topic}」"
+    else:
+        topic_instruction = (
+            "テーマは自由に決めてください(新作トイのレビュー、レトロトイの魅力、知育玩具の選び方、"
+            "DIYおもちゃ、コレクター向け情報、プレゼント選びのコツ、旅行先での子ども向けお土産など、"
+            "おもちゃに関する範囲内で)。"
+        )
+    category_names = "、".join(c["name"] for c in categories if c["name"] != "Uncategorized")
+
+    prompt = f"""あなたは「おもちゃミュージアム」というブログのSEOライターです。
+{topic_instruction}
+このテーマで記事を書くとしたら、という前提で、SEOを意識したタイトル候補を{count}個考えてください。
+
+## タイトルのスタイル
+【】で始まる、具体的で読者の悩みに刺さるフックタイトルにする。
+例:「【福岡空港お土産】出張パパ必見!子どもが喜ぶおもちゃまとめ」「【年齢別】知育玩具の選び方完全ガイド」
+
+## 参考: このブログの既存カテゴリー
+{category_names}
+
+各候補には、そのタイトルでSEO的に狙う検索キーワード(target_keyword)も1つ添えてください。
+{count}個は、切り口(年齢別/シーン別/悩み別など)が重ならないようにバリエーションをつけてください。
+
+必ず次のJSON形式のみで返してください。他の文章は含めないこと。
+{{"candidates": [{{"title": "...", "target_keyword": "..."}}, ...]}}
+"""
+    _, data = _call_claude([{"role": "user", "content": prompt}])
+    return data.get("candidates", [])
+
+
+def check_titles_seo(candidates: list, existing_titles: list, log=DEFAULT_LOG) -> list:
+    """タイトル候補をSEOルールに沿ってチェックする(タイトル生成とは別のAIコールで行う)。"""
+    rules_text = "\n".join(f"{i + 1}. {r}" for i, r in enumerate(TITLE_SEO_RULES))
+    candidates_json = json.dumps(candidates, ensure_ascii=False)
+    existing_text = "\n".join(f"- {t}" for t in existing_titles) or "(既存記事なし)"
+
+    prompt = f"""あなたはSEOの専門家です。以下のブログ記事タイトル候補を、次のルールに基づいて厳密にチェックしてください。
+自分でタイトルを考えるのではなく、あくまで審査役として、与えられた候補だけを評価してください。
+
+## SEOルール
+{rules_text}
+
+## 既存記事タイトル(この内容と重複・カニバリしていないか確認すること)
+{existing_text}
+
+## チェック対象のタイトル候補
+{candidates_json}
+
+各候補について、ルールに沿っているかを判定してください。
+- verdict: 問題なければ"ok"、軽微でも問題があれば"warn"
+- reasons: 該当した問題点を箇条書きで(日本語、具体的に)。問題がなければ空配列
+
+必ず次のJSON形式のみで返してください。他の文章は含めないこと。候補の順序・件数はそのまま維持すること。
+{{"results": [{{"title": "...", "verdict": "ok", "reasons": []}}, ...]}}
+"""
+    _, data = _call_claude([{"role": "user", "content": prompt}])
+    return data.get("results", [])
+
+
+def generate_outline(
+    title: str,
+    target_keyword: str,
+    categories: list,
+    category: str | None = None,
+    log=DEFAULT_LOG,
+) -> dict:
+    """承認されたタイトルをもとに、本文を書く前の構成案(アウトライン)を作る。"""
+    category_names = "、".join(c["name"] for c in categories if c["name"] != "Uncategorized")
+    if category:
+        category_instruction = f'"category"には必ず次の値をそのまま使うこと:「{category}」'
+    else:
+        category_instruction = (
+            "このブログの既存カテゴリーの中から、記事に最も合うものを1つだけ選んでください"
+            f"(新しいカテゴリー名を作らないこと): {category_names}"
+        )
+
+    prompt = f"""あなたは「おもちゃミュージアム」というブログの編集者です。
+次のタイトルで記事を書くことが決まりました。本文を書く前に、構成案(アウトライン)を作成してください。
+
+タイトル:「{title}」
+SEOで狙うキーワード:「{target_keyword}」
+
+このブログには「ゆう」というハムスターのキャラクターがいて、読者からの悩み相談に答える形で
+記事を書き始めるのが定番のスタイルです。会話パートを冒頭・中盤・最後の3箇所に入れます。
+- reader_persona: 読者役の短いラベル
+- reader_question / yu_answer: 冒頭の会話
+- mid_question / mid_answer: 中盤の会話(記事の内容を踏まえた追加の疑問)
+- closing_comment: 最後の「ゆう」単独のまとめ・応援コメント
+
+## カテゴリー
+{category_instruction}
+
+## アウトライン
+5〜7個の見出し(h2)を考え、それぞれ何を書くかの概要(1〜2文)を添えてください。
+全体で本文5000文字以上になるボリューム感を意識すること。
+
+必ず次のJSON形式のみで返してください。他の文章は含めないこと。
+
+{{
+  "title": "{title}",
+  "meta_description": "検索結果に表示される説明文(120文字程度)",
+  "keywords": ["SEOキーワード1", "SEOキーワード2", "SEOキーワード3"],
+  "category": "選んだカテゴリー",
+  "reader_persona": "読者役の短いラベル",
+  "reader_question": "冒頭の読者の悩み・質問",
+  "yu_answer": "冒頭のゆうの返答",
+  "mid_question": "中盤の読者の追加の疑問",
+  "mid_answer": "中盤のゆうの返答",
+  "closing_comment": "最後のゆうのまとめ・応援コメント",
+  "amazon_search_keyword": "記事に関連する商品をAmazonで探すための検索キーワード(具体的な商品カテゴリ名、日本語)",
+  "outline": [
+    {{"heading": "見出し1", "summary": "このセクションで書く内容の概要"}}
+  ]
+}}
+"""
+    _, data = _call_claude([{"role": "user", "content": prompt}])
+    return data
+
+
+def build_content_prompt_from_outline(outline: dict) -> str:
+    outline_lines = "\n".join(
+        f"- {o['heading']}: {o['summary']}" for o in outline.get("outline", [])
+    )
+    keywords = "、".join(outline.get("keywords", []))
+    return f"""あなたは「おもちゃミュージアム」というブログの専属ライターです。
+以下の承認済み構成案に沿って、記事本文を執筆してください。構成案の見出し・流れは変更しないこと。
+
+タイトル:「{outline.get('title', '')}」
+メタディスクリプション: {outline.get('meta_description', '')}
+SEOキーワード: {keywords}
+
+## 構成案(この通りの見出し・順序で書くこと)
+{outline_lines}
+
+## 文体・トーン
+- 「です・ます調」で、丁寧で優しい雰囲気にする
+- 具体的で実用的な情報(店舗名、商品の特徴など)を盛り込む
+- SEOキーワードを自然に本文へ盛り込む
+- アフィリエイト記事として成立するよう、紹介する商品への興味を高める文章にする
+
+## 文字数(重要)
+- 本文は**必ず5000文字以上**にすること
+- 各見出しにつき400〜700文字程度を目安に、構成案の各セクションを詳しく執筆すること
+
+## 装飾(デザイン)
+本文のHTML内で、以下のような装飾を適宜使ってください(インラインstyleで指定すること):
+- 重要な語句は <strong> で太字にする
+- 特に注目してほしい語句は <span class="marker-under">のように囲む
+- 「ポイント」「まとめ」などは背景色付きのボックスにする。例:
+  <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:16px;margin:16px 0;border-radius:4px;"><strong>ポイント</strong><br>ここに内容</div>
+- 比較や一覧が適切な場面ではtable要素も使ってよい
+
+## 会話プレースホルダー
+本文中盤の、話題の区切りが良い位置に、プレースホルダーとして `[[MID_CONVERSATION]]` という文字列だけを1箇所挿入すること。
+
+## 出力形式
+必ず次のJSON形式のみで返してください。他の文章やコードブロックの記号は含めないこと。
+<h2>から始めること(タイトルや会話パートは含めない)。
+
+{{"content": "構成案に沿ったh2から始まる本文HTML(5000文字以上、[[MID_CONVERSATION]]を1箇所含む)"}}
+"""
+
+
+def generate_article_from_outline(outline: dict, max_expand_attempts: int = 2, log=DEFAULT_LOG) -> dict:
+    """承認済みのアウトラインに沿って本文を生成し、タイトル等の固定フィールドと結合する。"""
+    messages = [{"role": "user", "content": build_content_prompt_from_outline(outline)}]
+    result = _generate_with_expansion(messages, max_expand_attempts, log)
+
+    article = dict(outline)
+    article["content"] = result["content"]
     return article
 
 
@@ -400,21 +612,17 @@ def save_article_locally(article: dict, full_content: str) -> str:
     return filepath
 
 
-def run_pipeline(
-    topic: str | None = None,
-    category: str | None = None,
+def finalize_and_publish(
+    article: dict,
+    categories: list,
     include_amazon: bool = True,
     include_featured_image: bool = True,
     log=print,
 ) -> dict:
-    """記事を1本生成し、ローカル保存 + WordPress下書き投稿までを行う。
+    """生成済みのarticle(title/content等を含む辞書)を仕上げ、ローカル保存+WordPress下書き投稿までを行う。
 
-    呼び出し元(CLI/Webアプリ)で共通して使える結果の辞書を返す。
+    generate_article()由来・generate_article_from_outline()由来のどちらのarticleでも使える共通処理。
     """
-    categories = fetch_categories()
-    article = generate_article(categories, topic=topic, category=category, log=log)
-    log(f"生成された記事タイトル: {article['title']}")
-
     persona = article.get("reader_persona", "読者")
     intro_html = build_conversation_balloon_html(
         persona, article.get("reader_question", ""), article.get("yu_answer", "")
@@ -481,6 +689,33 @@ def run_pipeline(
         result["error"] = str(exc)
 
     return result
+
+
+def run_pipeline(
+    topic: str | None = None,
+    category: str | None = None,
+    include_amazon: bool = True,
+    include_featured_image: bool = True,
+    log=print,
+) -> dict:
+    """テーマ(または自由生成)から記事を1本生成し、仕上げ・投稿までを行う。"""
+    categories = fetch_categories()
+    article = generate_article(categories, topic=topic, category=category, log=log)
+    log(f"生成された記事タイトル: {article['title']}")
+    return finalize_and_publish(article, categories, include_amazon, include_featured_image, log)
+
+
+def run_pipeline_from_outline(
+    outline: dict,
+    include_amazon: bool = True,
+    include_featured_image: bool = True,
+    log=print,
+) -> dict:
+    """承認済みのアウトラインから記事を1本生成し、仕上げ・投稿までを行う。"""
+    categories = fetch_categories()
+    article = generate_article_from_outline(outline, log=log)
+    log(f"生成された記事タイトル: {article['title']}")
+    return finalize_and_publish(article, categories, include_amazon, include_featured_image, log)
 
 
 def main() -> None:

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}ホーム | おもちゃミュージアム{% endblock %}
+{% block heading %}ホーム{% endblock %}
+{% block content %}
+
+<div class="card" style="margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;">
+  <div>
+    <div style="font-size:1.2rem;font-weight:bold;">こんにちは!今日も記事を作りましょう</div>
+    <div style="color:#6b7280;font-size:0.88rem;margin-top:4px;">これまでに{{ history|length }}本の記事を生成しました</div>
+  </div>
+  <a href="/generate" class="btn">+ 新しい記事を生成</a>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="label">生成した記事数</div>
+    <div class="value">{{ history|length }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">今週の生成数</div>
+    <div class="value">{{ this_week_count }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">WordPress下書き成功</div>
+    <div class="value">{{ success_count }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">失敗</div>
+    <div class="value">{{ error_count }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <strong>最近の記事</strong>
+    <a href="/history" class="link">すべて見る &raquo;</a>
+  </div>
+  {% if history %}
+  <table>
+    <tr><th>日時</th><th>タイトル</th><th>カテゴリー</th><th>状態</th></tr>
+    {% for item in history[:5] %}
+    <tr>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.title }}</td>
+      <td>{{ item.category }}</td>
+      <td>
+        {% if item.wp_link %}
+        <a class="link" href="{{ item.wp_link }}" target="_blank">下書きを開く</a>
+        {% else %}
+        <span class="badge ng">失敗</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">まだ記事がありません。「記事生成」から作成してみましょう。</div>
+  {% endif %}
+</div>
+
+{% endblock %}
