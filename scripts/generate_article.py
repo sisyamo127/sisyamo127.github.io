@@ -465,6 +465,104 @@ def generate_article_from_outline(outline: dict, max_expand_attempts: int = 2, l
     return article
 
 
+# ---------------------------------------------------------------------------
+# 既存記事のリライト
+# ---------------------------------------------------------------------------
+
+def build_rewrite_prompt(existing_title: str, existing_text: str, categories: list, category: str | None = None) -> str:
+    category_names = "、".join(c["name"] for c in categories if c["name"] != "Uncategorized")
+    if category:
+        category_instruction = f'"category"には必ず次の値をそのまま使うこと:「{category}」'
+    else:
+        category_instruction = (
+            "このブログの既存カテゴリーの中から、記事に最も合うものを1つだけ選んでください"
+            f"(新しいカテゴリー名を作らないこと): {category_names}"
+        )
+    excerpt = existing_text[:6000]
+
+    return f"""あなたは「おもちゃミュージアム」というブログの専属ライターです。
+以下は現在サイトに掲載されている記事です。この記事を、最新のハウススタイルに沿ってリライトしてください。
+
+## 元記事
+タイトル:「{existing_title}」
+本文(参考、HTMLタグは除去済み):
+{excerpt}
+
+## リライトの方針
+- 元記事のトピック・具体的な事実(店舗名、商品名、地名等)はできるだけ尊重すること
+- 情報が古くなっていそうな部分(価格、流行、時期の記述等)は一般的で無難な表現に書き換えるか、最新の情報として自然に書き直すこと
+- 単なる言い換えではなく、より詳しく・具体的に加筆し、SEOとしても改善すること
+- タイトルは元のままでもよいが、より検索されやすいタイトルがあれば改善してよい(【】から始まる形式を維持)
+
+## このブログの定番スタイル
+「ゆう」というハムスターのキャラクターが読者からの悩み相談に答える形で記事を書き始める。
+会話パートを冒頭・中盤・最後の3箇所に入れる。
+- reader_persona / reader_question / yu_answer: 冒頭の会話
+- mid_question / mid_answer: 中盤の会話
+- closing_comment: 最後の「ゆう」単独のまとめ・応援コメント
+
+## カテゴリー
+{category_instruction}
+
+## 商品紹介(2〜3個)
+記事に合う具体的な商品を2〜3個選び、product_mentionsとして挙げてください。
+- heading: 紹介する箇所の見出し(outlineのheadingと同じ文字列)
+- name: 商品の名前・種類
+- search_keyword: Amazonで検索するための具体的なキーワード
+
+## 文字数・構成(重要)
+- 本文(content)は**必ず5000文字以上**にすること
+- h2見出しを5〜7個用意し、それぞれ400〜600文字程度で執筆すること
+- <h2>から始めること(タイトルや会話パートは含めない)
+- 本文中盤の良い位置に `[[MID_CONVERSATION]]` を1箇所、商品に触れた直後に `[[PRODUCT:0]]` 等のプレースホルダーを挿入すること
+
+## 装飾(デザイン)
+本文のHTML内で、以下のような装飾を適宜使ってください(インラインstyleで指定すること):
+- 重要な語句は <strong> で太字にする
+- 特に注目してほしい語句は <span class="marker-under">のように囲む
+- 「ポイント」「まとめ」などは背景色付きのボックスにする。例:
+  <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:16px;margin:16px 0;border-radius:4px;"><strong>ポイント</strong><br>ここに内容</div>
+- 比較や一覧が適切な場面ではtable要素も使ってよい
+
+## 出力形式
+必ず次のJSON形式のみで返してください。他の文章やコードブロックの記号は含めないこと。
+
+{{
+  "title": "【】から始まる記事タイトル",
+  "seo_title": "検索エンジン向けのSEOタイトル(全角32文字以内)",
+  "meta_description": "検索結果に表示される説明文(120文字程度)",
+  "keywords": ["SEOキーワード1", "SEOキーワード2", "SEOキーワード3"],
+  "category": "選んだカテゴリー",
+  "reader_persona": "読者役の短いラベル",
+  "reader_question": "冒頭の読者の悩み・質問",
+  "yu_answer": "冒頭のゆうの返答",
+  "mid_question": "中盤の読者の追加の疑問",
+  "mid_answer": "中盤のゆうの返答",
+  "closing_comment": "最後のゆうのまとめ・応援コメント",
+  "amazon_search_keyword": "記事全体を総括するおすすめ商品のAmazon検索キーワード",
+  "product_mentions": [
+    {{"heading": "見出し", "name": "商品名・種類", "search_keyword": "Amazon検索キーワード"}}
+  ],
+  "content": "h2から始まる本文HTML(5000文字以上、[[MID_CONVERSATION]]と[[PRODUCT:n]]を含む)"
+}}
+"""
+
+
+def generate_rewrite(
+    existing_title: str,
+    existing_text: str,
+    categories: list,
+    category: str | None = None,
+    max_expand_attempts: int = 2,
+    log=DEFAULT_LOG,
+) -> dict:
+    """既存記事を参考に、ハウススタイルへリライトした記事を生成する。"""
+    messages = [
+        {"role": "user", "content": build_rewrite_prompt(existing_title, existing_text, categories, category)}
+    ]
+    return _generate_with_expansion(messages, max_expand_attempts, log)
+
+
 def build_conversation_balloon_html(persona: str, question: str, answer: str) -> str:
     """読者と「ゆう」の会話(Cocoonのふきだしブロック相当)を組み立てる。冒頭・中盤で使用。"""
     return f"""<div style="border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin:16px 0;background:#fafafa;">
@@ -668,6 +766,79 @@ def post_to_wordpress_draft(
     return post.get("link") or f"post id {post.get('id')}"
 
 
+def update_wordpress_post(
+    post_id: int,
+    title: str,
+    content: str,
+    category_id: int | None,
+    featured_media_id: int | None = None,
+) -> str:
+    """既存の投稿をリライト結果で上書きする(下書きに戻す)。slugは変更しないためURLは維持される。"""
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    username = os.environ["WP_USERNAME"]
+    app_password = os.environ["WP_APP_PASSWORD"]
+
+    payload = {"title": title, "content": content, "status": "draft"}
+    if category_id is not None:
+        payload["categories"] = [category_id]
+    if featured_media_id is not None:
+        payload["featured_media"] = featured_media_id
+
+    response = requests.post(
+        f"{wp_url}/wp-json/wp/v2/posts/{post_id}",
+        auth=(username, app_password),
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        json=payload,
+        timeout=60,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"WordPressの記事更新に失敗しました (HTTP {response.status_code}): {response.text}"
+        )
+    post = response.json()
+    return post.get("link") or f"post id {post.get('id')}"
+
+
+def fetch_posts_for_rewrite(per_page: int = 50) -> list:
+    """リライト対象を選ぶための既存記事一覧(公開・下書き含む)を取得する。"""
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    username = os.environ["WP_USERNAME"]
+    app_password = os.environ["WP_APP_PASSWORD"]
+
+    response = requests.get(
+        f"{wp_url}/wp-json/wp/v2/posts",
+        auth=(username, app_password),
+        params={"per_page": per_page, "status": "publish,draft,future,pending", "_fields": "id,title,link,status"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return [
+        {"id": p["id"], "title": p["title"]["rendered"], "link": p["link"], "status": p["status"]}
+        for p in response.json()
+    ]
+
+
+def fetch_post_for_rewrite(post_id: int) -> dict:
+    """リライト元となる既存記事の本文を取得する(HTMLタグは除去してテキスト化)。"""
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    username = os.environ["WP_USERNAME"]
+    app_password = os.environ["WP_APP_PASSWORD"]
+
+    response = requests.get(
+        f"{wp_url}/wp-json/wp/v2/posts/{post_id}",
+        auth=(username, app_password),
+        params={"_fields": "id,title,content,categories"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+    text = re.sub(r"<[^>]+>", " ", data["content"]["rendered"])
+    text = re.sub(r"\s+", " ", text).strip()
+    return {"id": data["id"], "title": data["title"]["rendered"], "text": text}
+
+
 ARTICLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "articles")
 
 
@@ -696,11 +867,14 @@ def finalize_and_publish(
     categories: list,
     include_amazon: bool = True,
     include_featured_image: bool = True,
+    rewrite_post_id: int | None = None,
     log=print,
 ) -> dict:
-    """生成済みのarticle(title/content等を含む辞書)を仕上げ、ローカル保存+WordPress下書き投稿までを行う。
+    """生成済みのarticle(title/content等を含む辞書)を仕上げ、ローカル保存+WordPress投稿までを行う。
 
-    generate_article()由来・generate_article_from_outline()由来のどちらのarticleでも使える共通処理。
+    generate_article()由来・generate_article_from_outline()由来・generate_rewrite()由来の
+    どのarticleでも使える共通処理。rewrite_post_idを指定すると、新規投稿ではなく
+    その投稿IDを下書きとして上書きする(slugは変更しないためURLは維持される)。
     """
     persona = article.get("reader_persona", "読者")
     intro_html = build_conversation_balloon_html(
@@ -772,13 +946,19 @@ def finalize_and_publish(
             except Exception as exc:
                 log(f"アイキャッチ画像の設定に失敗しました(画像なしで投稿します): {exc}")
 
-        link = post_to_wordpress_draft(
-            article["title"], full_content, category_id, featured_media_id
-        )
-        log(f"WordPressに下書き保存しました: {link}")
+        if rewrite_post_id is not None:
+            link = update_wordpress_post(
+                rewrite_post_id, article["title"], full_content, category_id, featured_media_id
+            )
+            log(f"WordPressの記事を上書き(下書きに変更)しました: {link}")
+        else:
+            link = post_to_wordpress_draft(
+                article["title"], full_content, category_id, featured_media_id
+            )
+            log(f"WordPressに下書き保存しました: {link}")
         result["wp_link"] = link
     except Exception as exc:
-        log(f"WordPressへの下書き保存に失敗しました(ローカル保存のみ完了): {exc}")
+        log(f"WordPressへの保存に失敗しました(ローカル保存のみ完了): {exc}")
         result["error"] = str(exc)
 
     return result
@@ -795,7 +975,9 @@ def run_pipeline(
     categories = fetch_categories()
     article = generate_article(categories, topic=topic, category=category, log=log)
     log(f"生成された記事タイトル: {article['title']}")
-    return finalize_and_publish(article, categories, include_amazon, include_featured_image, log)
+    return finalize_and_publish(
+        article, categories, include_amazon, include_featured_image, log=log
+    )
 
 
 def run_pipeline_from_outline(
@@ -808,7 +990,32 @@ def run_pipeline_from_outline(
     categories = fetch_categories()
     article = generate_article_from_outline(outline, log=log)
     log(f"生成された記事タイトル: {article['title']}")
-    return finalize_and_publish(article, categories, include_amazon, include_featured_image, log)
+    return finalize_and_publish(
+        article, categories, include_amazon, include_featured_image, log=log
+    )
+
+
+def run_pipeline_rewrite(
+    post_id: int,
+    category: str | None = None,
+    include_amazon: bool = True,
+    include_featured_image: bool = True,
+    log=print,
+) -> dict:
+    """既存記事(post_id)をリライトし、同じ投稿を下書きとして上書きする。"""
+    categories = fetch_categories()
+    existing = fetch_post_for_rewrite(post_id)
+    log(f"「{existing['title']}」をリライトしています...")
+    article = generate_rewrite(existing["title"], existing["text"], categories, category=category, log=log)
+    log(f"リライト後の記事タイトル: {article['title']}")
+    return finalize_and_publish(
+        article,
+        categories,
+        include_amazon,
+        include_featured_image,
+        rewrite_post_id=post_id,
+        log=log,
+    )
 
 
 def main() -> None:

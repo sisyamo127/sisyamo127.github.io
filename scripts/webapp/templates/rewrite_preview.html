@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}リライトプレビュー | おもちゃミュージアム{% endblock %}
+{% block heading %}リライト内容の確認{% endblock %}
+{% block content %}
+
+<div class="card" style="max-width:760px;">
+  <p id="status">リライト中...</p>
+  <div id="logs" style="background:#111;color:#0f0;padding:16px;border-radius:8px;min-height:80px;white-space:pre-wrap;font-family:monospace;font-size:0.8rem;"></div>
+  <div id="preview" style="margin-top:16px;"></div>
+  <a class="link" href="/rewrite" style="display:inline-block;margin-top:16px;">&laquo; 記事選択に戻る</a>
+</div>
+
+<script>
+const jobId = "{{ job_id }}";
+const statusEl = document.getElementById("status");
+const logsEl = document.getElementById("logs");
+const previewEl = document.getElementById("preview");
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s || "";
+  return div.innerHTML;
+}
+
+function renderPreview(data) {
+  const a = data.article;
+  let previewBody = (a.content || "")
+    .replace(/\[\[MID_CONVERSATION\]\]/g, '<div style="color:#999;font-size:0.8rem;">(会話ブロックがここに入ります)</div>')
+    .replace(/\[\[PRODUCT:\d+\]\]/g, '<div style="color:#999;font-size:0.8rem;">(商品カードがここに入ります)</div>');
+
+  let html = `<p style="color:#6b7280;font-size:0.85rem;">元タイトル: ${escapeHtml(data.original_title)}</p>`;
+  html += `<h3 style="margin:4px 0;">${escapeHtml(a.title)}</h3>`;
+  html += `<p style="color:#6b7280;font-size:0.85rem;">${escapeHtml(a.meta_description)}</p>`;
+  html += `<p style="font-size:0.85rem;"><strong>カテゴリー:</strong> ${escapeHtml(a.category)} &nbsp; <strong>キーワード:</strong> ${(a.keywords || []).map(escapeHtml).join(", ")}</p>`;
+  html += `<div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;max-height:400px;overflow-y:auto;margin-top:10px;">${previewBody}</div>`;
+  html += `
+    <form action="/rewrite/confirm" method="post" style="margin-top:16px;">
+      <input type="hidden" name="job_id" value="${jobId}">
+      <button type="submit" class="btn">この内容で上書きする(下書きに変更) &raquo;</button>
+    </form>`;
+  previewEl.innerHTML = html;
+}
+
+async function poll() {
+  const res = await fetch(`/jobs/${jobId}/data`);
+  const data = await res.json();
+  logsEl.textContent = data.logs.join("\n");
+
+  if (data.status === "done") {
+    statusEl.textContent = "リライトが完了しました。内容を確認してください。";
+    renderPreview(data.result);
+    return;
+  }
+  if (data.status === "error") {
+    statusEl.textContent = "エラーが発生しました";
+    previewEl.innerHTML = `<p style="color:#c00;">${escapeHtml(data.error)}</p>`;
+    return;
+  }
+  setTimeout(poll, 2000);
+}
+poll();
+</script>
+
+{% endblock %}
