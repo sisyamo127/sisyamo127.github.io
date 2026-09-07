@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}構成案 | おもちゃミュージアム{% endblock %}
+{% block heading %}構成案の確認{% endblock %}
+{% block content %}
+
+<div class="card" style="max-width:680px;">
+  <p id="status">構成案を作成中...</p>
+  <div id="logs" style="background:#111;color:#0f0;padding:16px;border-radius:8px;min-height:80px;white-space:pre-wrap;font-family:monospace;font-size:0.8rem;"></div>
+  <div id="outlineBody" style="margin-top:16px;"></div>
+  <a class="link" href="/generate" style="display:inline-block;margin-top:16px;">&laquo; 最初からやり直す</a>
+</div>
+
+<script>
+const jobId = "{{ job_id }}";
+const statusEl = document.getElementById("status");
+const logsEl = document.getElementById("logs");
+const bodyEl = document.getElementById("outlineBody");
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s || "";
+  return div.innerHTML;
+}
+
+function renderOutline(outline) {
+  let html = `<h3 style="margin:0 0 4px;">${escapeHtml(outline.title)}</h3>`;
+  html += `<p style="color:#6b7280;font-size:0.85rem;">${escapeHtml(outline.meta_description)}</p>`;
+  html += `<p style="font-size:0.85rem;"><strong>カテゴリー:</strong> ${escapeHtml(outline.category)} &nbsp; <strong>キーワード:</strong> ${(outline.keywords || []).map(escapeHtml).join(", ")}</p>`;
+  html += '<div style="margin-top:12px;"><strong>見出し構成</strong><ol style="margin:8px 0 0 20px;padding:0;">';
+  (outline.outline || []).forEach(function (o) {
+    html += `<li style="margin-bottom:8px;"><strong>${escapeHtml(o.heading)}</strong><br><span style="color:#6b7280;font-size:0.85rem;">${escapeHtml(o.summary)}</span></li>`;
+  });
+  html += "</ol></div>";
+  html += `
+    <form action="/generate/approve-outline" method="post" style="margin-top:16px;">
+      <input type="hidden" name="job_id" value="${jobId}">
+      <button type="submit" class="btn">この構成でOK、記事を作成 &raquo;</button>
+    </form>`;
+  bodyEl.innerHTML = html;
+}
+
+async function poll() {
+  const res = await fetch(`/jobs/${jobId}/data`);
+  const data = await res.json();
+  logsEl.textContent = data.logs.join("\n");
+
+  if (data.status === "done") {
+    statusEl.textContent = "構成案ができました。内容を確認してください。";
+    renderOutline(data.result.outline);
+    return;
+  }
+  if (data.status === "error") {
+    statusEl.textContent = "エラーが発生しました";
+    bodyEl.innerHTML = `<p style="color:#c00;">${escapeHtml(data.error)}</p>`;
+    return;
+  }
+  setTimeout(poll, 2000);
+}
+poll();
+</script>
+
+{% endblock %}

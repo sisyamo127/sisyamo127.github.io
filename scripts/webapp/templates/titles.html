@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}タイトル案 | おもちゃミュージアム{% endblock %}
+{% block heading %}タイトル案の選択{% endblock %}
+{% block content %}
+
+<div class="card" style="max-width:680px;">
+  <p id="status">タイトル案を生成中...</p>
+  <div id="logs" style="background:#111;color:#0f0;padding:16px;border-radius:8px;min-height:80px;white-space:pre-wrap;font-family:monospace;font-size:0.8rem;"></div>
+  <div id="candidates" style="margin-top:16px;"></div>
+  <a class="link" href="/generate" style="display:inline-block;margin-top:16px;">&laquo; テーマ入力に戻る</a>
+</div>
+
+<script>
+const jobId = "{{ job_id }}";
+const statusEl = document.getElementById("status");
+const logsEl = document.getElementById("logs");
+const candidatesEl = document.getElementById("candidates");
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s || "";
+  return div.innerHTML;
+}
+
+function renderCandidates(candidates) {
+  let html = '<form action="/generate/select-title" method="post">';
+  html += `<input type="hidden" name="job_id" value="${jobId}">`;
+  candidates.forEach((c, i) => {
+    const ok = c.verdict === "ok";
+    const badge = ok ? '<span class="badge ok">OK</span>' : '<span class="badge warn">要確認</span>';
+    let reasonsHtml = "";
+    if (c.reasons && c.reasons.length) {
+      reasonsHtml = '<ul style="margin:6px 0 0 22px;color:#92400e;font-size:0.82rem;">' +
+        c.reasons.map(r => `<li>${escapeHtml(r)}</li>`).join("") + "</ul>";
+    }
+    html += `
+      <label style="display:block;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:10px;cursor:pointer;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+          <div><input type="radio" name="index" value="${i}" ${i === 0 ? "checked" : ""} required> <strong>${escapeHtml(c.title)}</strong></div>
+          ${badge}
+        </div>
+        <div style="color:#6b7280;font-size:0.82rem;margin-top:4px;margin-left:22px;">狙うキーワード: ${escapeHtml(c.target_keyword)}</div>
+        ${reasonsHtml}
+      </label>`;
+  });
+  html += '<button type="submit" class="btn" style="margin-top:10px;">このタイトルで進める &raquo;</button></form>';
+  candidatesEl.innerHTML = html;
+}
+
+async function poll() {
+  const res = await fetch(`/jobs/${jobId}/data`);
+  const data = await res.json();
+  logsEl.textContent = data.logs.join("\n");
+
+  if (data.status === "done") {
+    statusEl.textContent = "候補が揃いました。1つ選んでください。";
+    renderCandidates(data.result.candidates);
+    return;
+  }
+  if (data.status === "error") {
+    statusEl.textContent = "エラーが発生しました";
+    candidatesEl.innerHTML = `<p style="color:#c00;">${escapeHtml(data.error)}</p>`;
+    return;
+  }
+  setTimeout(poll, 2000);
+}
+poll();
+</script>
+
+{% endblock %}
