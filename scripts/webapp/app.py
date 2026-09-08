@@ -11,6 +11,8 @@
   /generate/outline/<job_id> アウトライン(構成案)を確認・承認
   /jobs/<job_id>             本文生成(最終ステップ)の進捗・結果
   /history                   生成履歴の一覧・検索
+  /rewrite                   既存記事の選択 → リライト
+  /rewrite/preview/<job_id>  リライト結果のプレビュー・上書き承認
   /status                    API連携状況の確認
 """
 
@@ -251,6 +253,90 @@ def approve_outline():
 @app.route("/history")
 def history_page():
     return render_template("history.html", active="history", history=load_history())
+
+
+# --- リライト: 既存記事を選ぶ → リライト → プレビュー → 上書き保存 ---------
+
+@app.route("/rewrite")
+def rewrite_list():
+    try:
+        posts = ga.fetch_posts_for_rewrite()
+    except Exception as exc:
+        posts = []
+        return render_template("rewrite.html", active="rewrite", posts=posts, categories=get_categories(), error=str(exc))
+    return render_template("rewrite.html", active="rewrite", posts=posts, categories=get_categories(), error=None)
+
+
+@app.route("/rewrite/start", methods=["POST"])
+def rewrite_start():
+    post_id = int(request.form.get("post_id", "0"))
+    category = request.form.get("category", "").strip()
+    include_amazon = request.form.get("include_amazon") == "on"
+    include_image = request.form.get("include_image") == "on"
+
+    def task(log):
+        categories = ga.fetch_categories()
+        existing = ga.fetch_post_for_rewrite(post_id)
+        log(f"「{existing['title']}」をリライトしています...")
+        article = ga.generate_rewrite(
+            existing["title"], existing["text"], categories, category=category or None, log=log
+        )
+        return {
+            "post_id": post_id,
+            "original_title": existing["title"],
+            "article": article,
+            "include_amazon": include_amazon,
+            "include_image": include_image,
+        }
+
+    job_id = start_job(task)
+    return redirect(url_for("rewrite_preview", job_id=job_id))
+
+
+@app.route("/rewrite/preview/<job_id>")
+def rewrite_preview(job_id: str):
+    job = get_job(job_id)
+    if job is None:
+        abort(404)
+    return render_template("rewrite_preview.html", active="rewrite", job_id=job_id, job=job)
+
+
+@app.route("/rewrite/confirm", methods=["POST"])
+def rewrite_confirm():
+    preview_job_id = request.form.get("job_id", "")
+    preview_job = get_job(preview_job_id)
+    if preview_job is None or preview_job.get("status") != "done":
+        abort(400)
+    data = preview_job["result"]
+
+    def task(log):
+        categories = ga.fetch_categories()
+        result = ga.finalize_and_publish(
+            data["article"],
+            categories,
+            include_amazon=data["include_amazon"],
+            include_featured_image=data["include_image"],
+            rewrite_post_id=data["post_id"],
+            log=log,
+        )
+        entry = {
+            "id": preview_job_id,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "title": result["title"],
+            "seo_title": result["seo_title"],
+            "meta_description": result["meta_description"],
+            "keywords": result["keywords"],
+            "category": result["category"],
+            "char_count": result["char_count"],
+            "wp_link": result["wp_link"],
+            "local_path": result["local_path"],
+            "error": result["error"],
+        }
+        save_history_entry(entry)
+        return entry
+
+    job_id = start_job(task)
+    return redirect(url_for("job_status", job_id=job_id))
 
 
 @app.route("/status")
