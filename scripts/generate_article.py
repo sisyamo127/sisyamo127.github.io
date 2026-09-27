@@ -424,6 +424,32 @@ def check_titles_seo(candidates: list, existing_titles: list, log=DEFAULT_LOG) -
     return data.get("results", [])
 
 
+def research_topic(title: str, target_keyword: str, log=DEFAULT_LOG) -> str:
+    """構成案を作る前に、記事に関連する実在の情報をWeb検索で調べておく(事実誤認の予防)。
+
+    店舗名・場所、ブランドの産地/発祥地、具体的な商品名、価格帯など、記事作成の裏付けに
+    なる事実を箇条書きで返す。特に見つからなければ空文字列を返す。
+    """
+    prompt = f"""あなたはリサーチャーです。これから「{title}」というタイトルの記事を書く予定です。
+狙うキーワード:「{target_keyword}」
+
+Web検索を使って、この記事に関連する実在の情報(店舗名・場所、ブランドの産地/発祥地、
+具体的な商品名、価格帯、発売時期など)を調べてください。不確かな情報は含めないこと。
+分からなかった項目は無理に埋めず省略してください。
+
+必ず次のJSON形式のみで返してください。他の文章は含めないこと。
+
+{{"facts": "調べて分かった事実の箇条書き(- 形式)。特になければ空文字列"}}
+"""
+    _, data = _call_claude([{"role": "user", "content": prompt}], tools=WEB_SEARCH_TOOL, max_tokens=2000)
+    facts = data.get("facts", "").strip()
+    if facts:
+        log("事前調査で関連情報を確認しました。")
+    else:
+        log("事前調査: 特筆すべき情報は見つかりませんでした。")
+    return facts
+
+
 def generate_outline(
     title: str,
     target_keyword: str,
@@ -431,7 +457,18 @@ def generate_outline(
     category: str | None = None,
     log=DEFAULT_LOG,
 ) -> dict:
-    """承認されたタイトルをもとに、本文を書く前の構成案(アウトライン)を作る。"""
+    """承認されたタイトルをもとに、本文を書く前の構成案(アウトライン)を作る。
+
+    構成案を作る前にWeb検索で関連する実在の情報を調べ、それを踏まえて作成することで
+    事実誤認(例: 実際は東京発祥のブランドを北海道発と書いてしまう、など)を予防する。
+    """
+    try:
+        facts = research_topic(title, target_keyword, log=log)
+    except Exception as exc:
+        log(f"事前調査に失敗しました(調査なしで構成案を作成します): {exc}")
+        facts = ""
+    facts_section = f"\n## 事前調査でわかった事実(参考にすること)\n{facts}\n" if facts else ""
+
     category_names = "、".join(c["name"] for c in categories if c["name"] != "Uncategorized")
     if category:
         category_instruction = f'"category"には必ず次の値をそのまま使うこと:「{category}」'
@@ -446,7 +483,7 @@ def generate_outline(
 
 タイトル:「{title}」
 SEOで狙うキーワード:「{target_keyword}」
-
+{facts_section}
 このブログには「ゆう」というハムスターのキャラクターがいて、読者からの悩み相談に答える形で
 記事を書き始めるのが定番のスタイルです。会話パートを冒頭・中盤・最後の3箇所に入れます。
 - reader_persona: 読者役の短いラベル
@@ -460,6 +497,8 @@ SEOで狙うキーワード:「{target_keyword}」
 ## アウトライン
 5〜7個の見出し(h2)を考え、それぞれ何を書くかの概要(1〜2文)を添えてください。
 全体で本文5000文字以上になるボリューム感を意識すること。
+事前調査でわかった事実があれば、それを優先して使ってください。ブランドの産地・店舗の場所など
+検証可能な事実については、事前調査にない内容を憶測で作らないこと。
 
 ## 記事内で紹介する商品(2〜3個)
 アウトラインの中から、具体的な商品を紹介するのにふさわしい見出しを2〜3個選び、
@@ -1182,6 +1221,27 @@ def finalize_and_publish(
         "error": None,
     }
 
+    log("① 内容確認: 事実確認(Web検索)を行っています...")
+    try:
+        issues = fact_check_article(full_content, log=log)
+    except Exception as exc:
+        log(f"事実確認に失敗しました(スキップします): {exc}")
+        issues = []
+    result["fact_check_issues"] = issues
+
+    if issues:
+        for i, issue in enumerate(issues, 1):
+            log(f"  指摘{i}: 「{issue.get('claim', '')}」→ {issue.get('issue', '')}")
+
+        log("② 修正: 指摘を反映して記事を修正しています...")
+        try:
+            full_content = fix_article_with_feedback(full_content, issues, log=log)
+            result["fact_check_fixed"] = True
+        except Exception as exc:
+            log(f"修正の反映に失敗しました(未修正のまま保存します): {exc}")
+
+    result["char_count"] = _content_char_count(full_content)
+
     try:
         category_id = resolve_category_id(article.get("category", ""), categories)
 
@@ -1194,7 +1254,7 @@ def finalize_and_publish(
             except Exception as exc:
                 log(f"アイキャッチ画像の設定に失敗しました(画像なしで投稿します): {exc}")
 
-        log("① 下書き作成: WordPressに下書きとして保存しています...")
+        log("③ 下書き作成: 確認・修正済みの内容をWordPressに下書きとして保存しています...")
         if rewrite_post_id is not None:
             link, post_id = update_wordpress_post(
                 rewrite_post_id, article["title"], full_content, category_id, featured_media_id
@@ -1207,32 +1267,6 @@ def finalize_and_publish(
             log(f"WordPressに下書き保存しました: {link}")
         result["wp_link"] = link
         result["post_id"] = post_id
-
-        log("② 内容確認: 事実確認(Web検索)を行っています...")
-        try:
-            issues = fact_check_article(full_content, log=log)
-        except Exception as exc:
-            log(f"事実確認に失敗しました(スキップします): {exc}")
-            issues = []
-        result["fact_check_issues"] = issues
-
-        if issues:
-            for i, issue in enumerate(issues, 1):
-                log(f"  指摘{i}: 「{issue.get('claim', '')}」→ {issue.get('issue', '')}")
-
-            log("③ 修正: 指摘を反映して記事を修正しています...")
-            try:
-                full_content = fix_article_with_feedback(full_content, issues, log=log)
-                result["char_count"] = _content_char_count(full_content)
-                if post_id is not None:
-                    link, _ = update_wordpress_post(
-                        post_id, article["title"], full_content, category_id, featured_media_id
-                    )
-                    result["wp_link"] = link
-                    result["fact_check_fixed"] = True
-                    log(f"修正後の内容でWordPressの下書きを更新しました: {link}")
-            except Exception as exc:
-                log(f"修正の反映に失敗しました(指摘内容のみ表示します): {exc}")
     except Exception as exc:
         log(f"WordPressへの保存に失敗しました(ローカル保存のみ完了): {exc}")
         result["error"] = str(exc)
