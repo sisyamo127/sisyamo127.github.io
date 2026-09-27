@@ -27,6 +27,9 @@
     </tr>
     {% endfor %}
   </table>
+  <p style="color:#6b7280;font-size:0.85rem;margin-top:10px;">
+    累計API利用料(概算): ${{ "%.4f"|format(total_cost_usd) }}
+  </p>
   {% else %}
   <div class="empty">まだ記事がありません。</div>
   {% endif %}
