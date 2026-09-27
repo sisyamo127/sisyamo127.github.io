@@ -4,37 +4,49 @@
 {% block content %}
 
 <div class="card" style="display:flex;flex-direction:column;flex:1;min-height:0;max-width:none;">
+  <div id="resumeArea" style="flex-shrink:0;"></div>
   <div id="chatLog" style="display:flex;flex-direction:column;gap:12px;flex:1;min-height:0;overflow-y:auto;padding-right:4px;"></div>
 
   <div id="choicesArea" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;flex-shrink:0;"></div>
 
-  <div id="readyArea" style="margin-top:14px;display:none;flex-shrink:0;"></div>
+  <div id="confirmArea" style="margin-top:14px;display:none;flex-shrink:0;"></div>
 
   <form id="chatForm" style="margin-top:14px;display:flex;gap:8px;flex-shrink:0;">
     <input type="text" id="chatInput" placeholder="どんな記事を書きたいか教えてください(例: 冬におすすめの外遊びおもちゃ)" style="flex:1;margin-top:0;" autocomplete="off">
     <button type="submit" class="btn" id="chatSend">送信</button>
   </form>
-  <p style="color:#9ca3af;font-size:0.78rem;margin-top:8px;flex-shrink:0;">選択肢をクリックするか、自由に文章で答えてください。</p>
+  <p id="chatHint" style="color:#9ca3af;font-size:0.78rem;margin-top:8px;flex-shrink:0;">選択肢をクリックするか、自由に文章で答えてください。</p>
 </div>
 
 <style>
   .chat-bubble { max-width:80%; padding:10px 14px; border-radius:12px; font-size:0.9rem; line-height:1.5; white-space:pre-wrap; }
   .chat-bubble.user { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:2px; }
   .chat-bubble.assistant { align-self:flex-start; background:#f3f4f6; color:var(--text); border-bottom-left-radius:2px; }
+  .chat-bubble.wide { max-width:95%; }
   .choice-chip { background:#fff; border:1px solid var(--accent); color:var(--accent); border-radius:16px; padding:6px 14px; font-size:0.85rem; cursor:pointer; }
   .choice-chip:hover { background:var(--accent); color:#fff; }
+  .title-card { display:block; width:100%; text-align:left; background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; margin-bottom:8px; cursor:pointer; font-family:inherit; }
+  .title-card:hover { border-color:var(--accent); }
 </style>
 
 <script>
+const resumeArea = document.getElementById("resumeArea");
 const chatLog = document.getElementById("chatLog");
 const choicesArea = document.getElementById("choicesArea");
-const readyArea = document.getElementById("readyArea");
+const confirmArea = document.getElementById("confirmArea");
 const chatForm = document.getElementById("chatForm");
 const chatInput = document.getElementById("chatInput");
 const chatSend = document.getElementById("chatSend");
+const chatHint = document.getElementById("chatHint");
+
+const resumableChats = {{ resumable_chats | tojson }};
 
 let history = [];
+let chatId = null;
 let busy = false;
+// phase: "chat"(方向性の対話) | "outline_review"(構成案の確認・自由記述で部分修正)
+let phase = "chat";
+let outlineJobId = null;
 
 function escapeHtml(s) {
   const div = document.createElement("div");
@@ -42,15 +54,70 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
-function addBubble(role, text) {
+function addBubble(role, text, wide) {
   const div = document.createElement("div");
-  div.className = "chat-bubble " + role;
+  div.className = "chat-bubble " + role + (wide ? " wide" : "");
   div.textContent = text;
   chatLog.appendChild(div);
   chatLog.scrollTop = chatLog.scrollHeight;
+  return div;
+}
+
+function addHtmlBubble(html) {
+  const div = document.createElement("div");
+  div.className = "chat-bubble assistant wide";
+  div.innerHTML = html;
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  return div;
+}
+
+function renderResumeList() {
+  if (!resumableChats || !resumableChats.length) return;
+  let html = '<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.85rem;">';
+  html += '<p style="margin:0 0 8px;color:#6b7280;">前回までの続きから再開できます:</p>';
+  resumableChats.forEach(function (c) {
+    html += `<button type="button" class="choice-chip resume-chip" data-chat-id="${c.id}" style="display:block;width:100%;text-align:left;margin-bottom:6px;border-radius:6px;">
+      ${escapeHtml(c.preview || "(無題)")} <span style="color:#9ca3af;">- ${escapeHtml(c.updated_at)}</span>
+    </button>`;
+  });
+  html += "</div>";
+  resumeArea.innerHTML = html;
+  resumeArea.querySelectorAll(".resume-chip").forEach(function (btn) {
+    btn.addEventListener("click", function () { resumeChat(btn.dataset.chatId); });
+  });
+}
+
+async function resumeChat(id) {
+  const res = await fetch(`/chats/${id}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  chatId = data.id;
+  history = data.history || [];
+  resumeArea.innerHTML = "";
+  chatLog.innerHTML = "";
+  history.forEach(function (turn) {
+    if (turn.role === "user") {
+      addBubble("user", turn.content);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(turn.content);
+      if (parsed.type === "question") {
+        addBubble("assistant", parsed.question || "");
+        renderChoices(parsed.choices);
+      } else if (parsed.type === "ready") {
+        addBubble("assistant", parsed.summary || "");
+      }
+    } catch (e) {
+      addBubble("assistant", turn.content);
+    }
+  });
+  chatInput.focus();
 }
 
 addBubble("assistant", "こんにちは!どんな記事を書きたいか、自由に教えてください。テーマが漠然としていても大丈夫です、足りない部分はこちらから質問します。");
+renderResumeList();
 
 function renderChoices(choices) {
   choicesArea.innerHTML = "";
@@ -64,23 +131,125 @@ function renderChoices(choices) {
   });
 }
 
-function renderReady(data) {
-  readyArea.style.display = "block";
-  readyArea.innerHTML = `
-    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;">
-      <p style="margin:0 0 10px;color:#166534;">${escapeHtml(data.summary || "この内容で記事を作成します:")}</p>
-      <p style="margin:0 0 4px;font-size:0.85rem;"><strong>テーマ:</strong> ${escapeHtml(data.topic || "")}</p>
-      <p style="margin:0 0 10px;font-size:0.85rem;"><strong>カテゴリー:</strong> ${escapeHtml(data.category || "(AIにお任せ)")}</p>
-      <form action="/generate" method="post">
-        <input type="hidden" name="topic" value="${escapeHtml(data.topic || "")}">
-        <input type="hidden" name="category" value="${escapeHtml(data.category || "")}">
-        ${data.include_amazon ? '<input type="hidden" name="include_amazon" value="on">' : ""}
-        ${data.include_image ? '<input type="hidden" name="include_image" value="on">' : ""}
-        <button type="submit" class="btn">この内容で記事を作る &raquo;</button>
-      </form>
-    </div>`;
-  chatInput.disabled = true;
-  chatSend.disabled = true;
+async function pollJob(jobId) {
+  for (;;) {
+    const res = await fetch(`/jobs/${jobId}/data`);
+    const data = await res.json();
+    if (data.status === "done") return data.result;
+    if (data.status === "error") throw new Error(data.error || "処理に失敗しました");
+    await new Promise(function (r) { setTimeout(r, 1500); });
+  }
+}
+
+async function startTitleGeneration(readyData) {
+  choicesArea.innerHTML = "";
+  const thinking = addBubble("assistant", "タイトル案を考えています...(少々お待ちください)");
+  try {
+    const formData = new FormData();
+    formData.append("topic", readyData.topic || "");
+    formData.append("category", readyData.category || "");
+    if (readyData.include_amazon) formData.append("include_amazon", "on");
+    if (readyData.include_image) formData.append("include_image", "on");
+    if (chatId) formData.append("chat_id", chatId);
+
+    const res = await fetch("/generate", {
+      method: "POST", body: formData, headers: { "X-Requested-With": "fetch-chat" },
+    });
+    const { job_id } = await res.json();
+    const result = await pollJob(job_id);
+    thinking.remove();
+    renderTitleCandidates(result.candidates, job_id);
+  } catch (exc) {
+    thinking.remove();
+    addBubble("assistant", "タイトル案の生成に失敗しました: " + exc);
+  }
+}
+
+function renderTitleCandidates(candidates, titlesJobId) {
+  let html = "<p style=\"margin:0 0 10px;\">タイトル案ができました。気に入ったものを選んでください:</p>";
+  candidates.forEach(function (c, i) {
+    const badge = c.verdict === "ok"
+      ? '<span class="badge ok">OK</span>'
+      : '<span class="badge warn">要確認</span>';
+    html += `<button type="button" class="title-card" data-index="${i}">
+      <div style="display:flex;justify-content:space-between;gap:10px;">
+        <strong>${escapeHtml(c.title)}</strong>${badge}
+      </div>
+      <div style="color:#6b7280;font-size:0.82rem;margin-top:4px;">狙うキーワード: ${escapeHtml(c.target_keyword)}</div>
+    </button>`;
+  });
+  const bubble = addHtmlBubble(html);
+  bubble.querySelectorAll(".title-card").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      const idx = Number(btn.dataset.index);
+      selectTitle(idx, candidates[idx], titlesJobId);
+    });
+  });
+}
+
+async function selectTitle(index, chosen, titlesJobId) {
+  addBubble("user", chosen.title);
+  const thinking = addBubble("assistant", "構成案(見出しの流れ)を考えています...");
+  try {
+    const formData = new FormData();
+    formData.append("job_id", titlesJobId);
+    formData.append("index", String(index));
+    const res = await fetch("/generate/select-title", {
+      method: "POST", body: formData, headers: { "X-Requested-With": "fetch-chat" },
+    });
+    const { job_id } = await res.json();
+    const result = await pollJob(job_id);
+    thinking.remove();
+    outlineJobId = job_id;
+    renderOutline(result.outline);
+  } catch (exc) {
+    thinking.remove();
+    addBubble("assistant", "構成案の作成に失敗しました: " + exc);
+  }
+}
+
+function renderOutline(outline) {
+  let html = `<p style="margin:0 0 4px;">構成案ができました。内容を確認してください。</p>`;
+  html += `<h3 style="margin:8px 0 4px;">${escapeHtml(outline.title)}</h3>`;
+  html += `<p style="color:#6b7280;font-size:0.85rem;">${escapeHtml(outline.meta_description)}</p>`;
+  html += `<p style="font-size:0.85rem;"><strong>カテゴリー:</strong> ${escapeHtml(outline.category)} &nbsp; <strong>キーワード:</strong> ${(outline.keywords || []).map(escapeHtml).join(", ")}</p>`;
+  html += '<div style="margin-top:8px;"><strong>見出し構成</strong><ol style="margin:8px 0 0 20px;padding:0;">';
+  (outline.outline || []).forEach(function (o) {
+    html += `<li style="margin-bottom:6px;"><strong>${escapeHtml(o.heading)}</strong><br><span style="color:#6b7280;font-size:0.85rem;">${escapeHtml(o.summary)}</span></li>`;
+  });
+  html += "</ol></div>";
+  addHtmlBubble(html);
+
+  phase = "outline_review";
+  chatHint.textContent = "この内容でよければ下のボタンを押してください。修正したい場合は、入力欄に直接どう直したいか書いて送信してください(例: 6番目の見出しを○○に変えて)。";
+
+  confirmArea.style.display = "block";
+  confirmArea.innerHTML = `
+    <form action="/generate/approve-outline" method="post">
+      <input type="hidden" name="job_id" value="${outlineJobId}">
+      <button type="submit" class="btn">この構成でOK、記事を作成 &raquo;</button>
+    </form>`;
+}
+
+async function reviseOutline(feedback) {
+  const thinking = addBubble("assistant", "構成案を修正しています...");
+  try {
+    const res = await fetch("/generate/revise-outline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: outlineJobId, feedback: feedback }),
+    });
+    const data = await res.json();
+    thinking.remove();
+    if (!res.ok || data.error) {
+      addBubble("assistant", "修正に失敗しました: " + (data.error || res.status));
+    } else {
+      renderOutline(data.outline);
+    }
+  } catch (exc) {
+    thinking.remove();
+    addBubble("assistant", "通信エラーが発生しました: " + exc);
+  }
 }
 
 async function sendMessage(text) {
@@ -88,10 +257,20 @@ async function sendMessage(text) {
   busy = true;
   choicesArea.innerHTML = "";
   addBubble("user", text);
-  history.push({ role: "user", content: text });
   chatInput.value = "";
   chatInput.disabled = true;
   chatSend.disabled = true;
+
+  if (phase === "outline_review") {
+    await reviseOutline(text);
+    chatInput.disabled = false;
+    chatSend.disabled = false;
+    chatInput.focus();
+    busy = false;
+    return;
+  }
+
+  history.push({ role: "user", content: text });
 
   const thinking = document.createElement("div");
   thinking.className = "chat-bubble assistant";
@@ -103,21 +282,25 @@ async function sendMessage(text) {
     const res = await fetch("/chat/message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ history }),
+      body: JSON.stringify({ history, chat_id: chatId }),
     });
     const data = await res.json();
     thinking.remove();
 
     if (!res.ok || data.type === "error") {
       addBubble("assistant", "エラーが発生しました: " + (data.message || res.status));
-    } else if (data.type === "ready") {
-      addBubble("assistant", data.summary || "方向性が固まりました。");
-      history.push({ role: "assistant", content: JSON.stringify(data) });
-      renderReady(data);
-      return; // ready状態では入力を再度有効化しない
     } else {
-      addBubble("assistant", data.question || "");
+      chatId = data.chat_id || chatId;
       history.push({ role: "assistant", content: JSON.stringify(data) });
+      if (data.type === "ready") {
+        addBubble("assistant", data.summary || "方向性が固まりました。");
+        chatInput.disabled = true;
+        chatSend.disabled = true;
+        await startTitleGeneration(data);
+        busy = false;
+        return; // タイトル選択以降はこの関数の外(ボタン操作)で進む
+      }
+      addBubble("assistant", data.question || "");
       renderChoices(data.choices);
     }
   } catch (exc) {
