@@ -16,6 +16,12 @@ const statusEl = document.getElementById("status");
 const logsEl = document.getElementById("logs");
 const resultEl = document.getElementById("result");
 
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s || "";
+  return div.innerHTML;
+}
+
 async function poll() {
   const res = await fetch(`/jobs/${jobId}/data`);
   const data = await res.json();
@@ -35,6 +41,21 @@ async function poll() {
         <p style="margin:0 0 4px;"><strong>メタディスクリプション:</strong> ${r.meta_description || ""}</p>
         <p style="margin:0;"><strong>メタキーワード:</strong> ${(r.keywords || []).join(", ")}</p>
       </div>`;
+    if (r.fact_check_issues && r.fact_check_issues.length) {
+      html += `
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px;margin-top:14px;font-size:0.85rem;">
+          <p style="margin:0 0 8px;color:#9a3412;">②内容確認で${r.fact_check_issues.length}件の指摘がありました${r.fact_check_fixed ? "(③反映して下書きを更新済み)" : "(反映に失敗したため未修正です)"}:</p>
+          ${r.fact_check_issues.map(function (issue) {
+            return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #fed7aa;">
+              <p style="margin:0 0 2px;"><strong>該当箇所:</strong> ${escapeHtml(issue.claim)}</p>
+              <p style="margin:0 0 2px;"><strong>指摘:</strong> ${escapeHtml(issue.issue)}</p>
+              <p style="margin:0;"><strong>修正案:</strong> ${escapeHtml(issue.correction)}</p>
+            </div>`;
+          }).join("")}
+        </div>`;
+    } else if (r.fact_check_issues) {
+      html += `<p style="color:#16a34a;font-size:0.82rem;margin-top:10px;">②内容確認: 問題は見つかりませんでした。</p>`;
+    }
     if (r.usage) {
       html += `<p style="color:#6b7280;font-size:0.78rem;margin-top:10px;">API利用量: 入力${r.usage.input_tokens.toLocaleString()}トークン / 出力${r.usage.output_tokens.toLocaleString()}トークン(概算費用 $${r.usage.cost_usd.toFixed(4)})</p>`;
     }

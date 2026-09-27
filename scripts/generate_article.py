@@ -185,10 +185,23 @@ def build_article_prompt(
 MIN_CONTENT_CHARS = 5000
 
 
-def _call_claude(messages: list) -> tuple[str, dict]:
-    """Claudeを呼び出し、(テキスト全文, パース済みJSON)を返す。"""
+def _call_claude(messages: list, tools: list | None = None, max_tokens: int = 12000) -> tuple[str, dict]:
+    """Claudeを呼び出し、(テキスト全文, パース済みJSON)を返す。
+
+    toolsを渡すとサーバーサイドツール(Web検索など)を有効にできる。その場合、
+    途中でtool_use/tool_resultのブロックが挟まるため、最後のtextブロックを
+    最終回答として採用する。
+    """
     api_key = os.environ["ANTHROPIC_API_KEY"]
     model = os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
+
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": messages,
+    }
+    if tools:
+        payload["tools"] = tools
 
     response = requests.post(
         ANTHROPIC_API_URL,
@@ -197,11 +210,7 @@ def _call_claude(messages: list) -> tuple[str, dict]:
             "anthropic-version": ANTHROPIC_API_VERSION,
             "content-type": "application/json",
         },
-        json={
-            "model": model,
-            "max_tokens": 12000,
-            "messages": messages,
-        },
+        json=payload,
         timeout=180,
     )
     response.raise_for_status()
@@ -212,12 +221,11 @@ def _call_claude(messages: list) -> tuple[str, dict]:
     _usage.output_tokens += usage.get("output_tokens", 0)
 
     content_blocks = data["content"]
-    text_block = next(
-        (block for block in content_blocks if block.get("type") == "text"), None
-    )
-    if text_block is None:
+    text_blocks = [block for block in content_blocks if block.get("type") == "text"]
+    if not text_blocks:
         raise ValueError(f"テキスト形式のレスポンスが見つかりませんでした: {content_blocks}")
-    text = text_block["text"].strip()
+    # ツール使用時は複数のtextブロックが挟まるため、最後(最終回答)を採用する
+    text = text_blocks[-1]["text"].strip()
 
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
@@ -781,7 +789,8 @@ def upload_featured_image(image_url: str, filename: str) -> int | None:
 
 def post_to_wordpress_draft(
     title: str, content: str, category_id: int | None, featured_media_id: int | None = None
-) -> str:
+) -> tuple[str, int]:
+    """下書きとして投稿し、(記事URL, post_id)を返す。"""
     wp_url = os.environ["WP_URL"].rstrip("/")
     username = os.environ["WP_USERNAME"]
     app_password = os.environ["WP_APP_PASSWORD"]
@@ -804,7 +813,7 @@ def post_to_wordpress_draft(
             f"WordPressへの下書き保存に失敗しました (HTTP {response.status_code}): {response.text}"
         )
     post = response.json()
-    return post.get("link") or f"post id {post.get('id')}"
+    return post.get("link") or f"post id {post.get('id')}", post.get("id")
 
 
 def update_wordpress_post(
@@ -813,8 +822,10 @@ def update_wordpress_post(
     content: str,
     category_id: int | None,
     featured_media_id: int | None = None,
-) -> str:
-    """既存の投稿をリライト結果で上書きする(下書きに戻す)。slugは変更しないためURLは維持される。"""
+) -> tuple[str, int]:
+    """既存の投稿をリライト結果で上書きする(下書きに戻す)。slugは変更しないためURLは維持される。
+    (記事URL, post_id)を返す。
+    """
     wp_url = os.environ["WP_URL"].rstrip("/")
     username = os.environ["WP_USERNAME"]
     app_password = os.environ["WP_APP_PASSWORD"]
@@ -837,7 +848,7 @@ def update_wordpress_post(
             f"WordPressの記事更新に失敗しました (HTTP {response.status_code}): {response.text}"
         )
     post = response.json()
-    return post.get("link") or f"post id {post.get('id')}"
+    return post.get("link") or f"post id {post.get('id')}", post.get("id")
 
 
 def fetch_posts_for_rewrite(per_page: int = 50) -> list:
@@ -903,6 +914,74 @@ def save_article_locally(article: dict, full_content: str) -> str:
     return filepath
 
 
+WEB_SEARCH_TOOL = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 5}]
+
+
+def fact_check_article(content: str, log=DEFAULT_LOG) -> list:
+    """記事本文中の具体的な事実主張(ブランド名・産地・購入可能場所・価格など)をWeb検索で
+    裏取りし、誤りの疑いがある箇所のリストを返す。問題がなければ空リスト。
+    """
+    prompt = f"""以下はおもちゃブログの記事本文(HTML)です。この中から、ブランド名・産地/所在地・
+購入可能な場所・価格・発売時期など、具体的で検証可能な事実の記述を洗い出し、Web検索を使って
+実際に正しいか確認してください。
+
+確認した結果、誤り・古い情報・誇張の疑いがある箇所だけを指摘してください。問題がなければ
+issuesを空配列にしてください。裏付けが取れた正しい記述はissuesに含めないでください。
+
+出力は必ず次のJSON形式のみで返してください。JSON以外の文章は含めないでください。
+
+{{
+  "issues": [
+    {{
+      "claim": "記事中の該当する記述(引用)",
+      "issue": "何が問題か(例: このブランドは実際には東京発祥で北海道発ではない)",
+      "correction": "正しい情報・修正の方向性"
+    }}
+  ]
+}}
+
+記事本文:
+{content}
+"""
+    messages = [{"role": "user", "content": prompt}]
+    _, result = _call_claude(messages, tools=WEB_SEARCH_TOOL, max_tokens=4000)
+    issues = result.get("issues", [])
+    if issues:
+        log(f"事実確認: {len(issues)}件の指摘がありました。")
+    else:
+        log("事実確認: 問題は見つかりませんでした。")
+    return issues
+
+
+def fix_article_with_feedback(content: str, issues: list, log=DEFAULT_LOG) -> str:
+    """事実確認で指摘された箇所を修正した本文(HTML)を返す。"""
+    issues_text = "\n".join(
+        f"- 該当箇所: {i.get('claim', '')}\n  問題点: {i.get('issue', '')}\n  修正の方向性: {i.get('correction', '')}"
+        for i in issues
+    )
+    prompt = f"""以下はおもちゃブログの記事本文(HTML)です。事実確認により、以下の指摘がありました。
+指摘された箇所のみを、修正の方向性に沿って書き換えてください。それ以外の文章・HTML構造・
+装飾(ふきだし・マーカー等)・プレースホルダー([[MID_CONVERSATION]]や[[PRODUCT:数字]]など)は
+変更せずそのまま維持してください。
+
+## 指摘事項
+{issues_text}
+
+## 元の本文
+{content}
+
+出力は必ず次のJSON形式のみで返してください。JSON以外の文章は含めないでください。
+
+{{
+  "content": "修正後の本文(HTML全文)"
+}}
+"""
+    messages = [{"role": "user", "content": prompt}]
+    _, result = _call_claude(messages, max_tokens=12000)
+    log("事実確認の指摘を反映しました。")
+    return result.get("content", content)
+
+
 def finalize_and_publish(
     article: dict,
     categories: list,
@@ -960,9 +1039,6 @@ def finalize_and_publish(
     amazon_section = f"<h2>おすすめ商品</h2>\n{product_html}\n\n" if product_html else ""
     full_content = f"{intro_html}\n\n{body}\n\n{amazon_section}{closing_html}"
 
-    filepath = save_article_locally(article, full_content)
-    log(f"記事をローカルに保存しました: {filepath}")
-
     result = {
         "title": article["title"],
         "seo_title": article.get("seo_title", article["title"]),
@@ -970,8 +1046,10 @@ def finalize_and_publish(
         "keywords": article.get("keywords", []),
         "category": article.get("category", ""),
         "char_count": _content_char_count(full_content),
-        "local_path": filepath,
+        "local_path": None,
         "wp_link": None,
+        "fact_check_issues": [],
+        "fact_check_fixed": False,
         "error": None,
     }
 
@@ -987,20 +1065,51 @@ def finalize_and_publish(
             except Exception as exc:
                 log(f"アイキャッチ画像の設定に失敗しました(画像なしで投稿します): {exc}")
 
+        log("① 下書き作成: WordPressに下書きとして保存しています...")
         if rewrite_post_id is not None:
-            link = update_wordpress_post(
+            link, post_id = update_wordpress_post(
                 rewrite_post_id, article["title"], full_content, category_id, featured_media_id
             )
-            log(f"WordPressの記事を上書き(下書きに変更)しました: {link}")
+            log(f"WordPressの記事を下書きとして保存しました: {link}")
         else:
-            link = post_to_wordpress_draft(
+            link, post_id = post_to_wordpress_draft(
                 article["title"], full_content, category_id, featured_media_id
             )
             log(f"WordPressに下書き保存しました: {link}")
         result["wp_link"] = link
+
+        log("② 内容確認: 事実確認(Web検索)を行っています...")
+        try:
+            issues = fact_check_article(full_content, log=log)
+        except Exception as exc:
+            log(f"事実確認に失敗しました(スキップします): {exc}")
+            issues = []
+        result["fact_check_issues"] = issues
+
+        if issues:
+            for i, issue in enumerate(issues, 1):
+                log(f"  指摘{i}: 「{issue.get('claim', '')}」→ {issue.get('issue', '')}")
+
+            log("③ 修正: 指摘を反映して記事を修正しています...")
+            try:
+                full_content = fix_article_with_feedback(full_content, issues, log=log)
+                result["char_count"] = _content_char_count(full_content)
+                if post_id is not None:
+                    link, _ = update_wordpress_post(
+                        post_id, article["title"], full_content, category_id, featured_media_id
+                    )
+                    result["wp_link"] = link
+                    result["fact_check_fixed"] = True
+                    log(f"修正後の内容でWordPressの下書きを更新しました: {link}")
+            except Exception as exc:
+                log(f"修正の反映に失敗しました(指摘内容のみ表示します): {exc}")
     except Exception as exc:
         log(f"WordPressへの保存に失敗しました(ローカル保存のみ完了): {exc}")
         result["error"] = str(exc)
+
+    filepath = save_article_locally(article, full_content)
+    log(f"記事をローカルに保存しました: {filepath}")
+    result["local_path"] = filepath
 
     return result
 
