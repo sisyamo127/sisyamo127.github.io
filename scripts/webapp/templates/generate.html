@@ -3,18 +3,18 @@
 {% block heading %}記事生成{% endblock %}
 {% block content %}
 
-<div class="card" style="max-width:640px;">
-  <div id="chatLog" style="display:flex;flex-direction:column;gap:12px;max-height:480px;overflow-y:auto;padding-right:4px;"></div>
+<div class="card" style="display:flex;flex-direction:column;flex:1;min-height:0;max-width:none;">
+  <div id="chatLog" style="display:flex;flex-direction:column;gap:12px;flex:1;min-height:0;overflow-y:auto;padding-right:4px;"></div>
 
-  <div id="choicesArea" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;"></div>
+  <div id="choicesArea" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;flex-shrink:0;"></div>
 
-  <div id="readyArea" style="margin-top:14px;display:none;"></div>
+  <div id="readyArea" style="margin-top:14px;display:none;flex-shrink:0;"></div>
 
-  <form id="chatForm" style="margin-top:14px;display:flex;gap:8px;">
+  <form id="chatForm" style="margin-top:14px;display:flex;gap:8px;flex-shrink:0;">
     <input type="text" id="chatInput" placeholder="どんな記事を書きたいか教えてください(例: 冬におすすめの外遊びおもちゃ)" style="flex:1;margin-top:0;" autocomplete="off">
     <button type="submit" class="btn" id="chatSend">送信</button>
   </form>
-  <p style="color:#9ca3af;font-size:0.78rem;margin-top:8px;">選択肢をクリックするか、自由に文章で答えてください。</p>
+  <p style="color:#9ca3af;font-size:0.78rem;margin-top:8px;flex-shrink:0;">選択肢をクリックするか、自由に文章で答えてください。</p>
 </div>
 
 <style>
