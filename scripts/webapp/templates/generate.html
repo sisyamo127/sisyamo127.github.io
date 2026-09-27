@@ -3,30 +3,138 @@
 {% block heading %}記事生成{% endblock %}
 {% block content %}
 
-<div class="card" style="max-width:560px;">
-  <form action="/generate" method="post">
-    <label for="topic">テーマ(空欄ならAIにお任せ)</label>
-    <input type="text" id="topic" name="topic" placeholder="例: 冬におすすめの外遊びおもちゃ">
+<div class="card" style="max-width:640px;">
+  <div id="chatLog" style="display:flex;flex-direction:column;gap:12px;max-height:480px;overflow-y:auto;padding-right:4px;"></div>
 
-    <label for="category">カテゴリー(空欄ならAIが選択)</label>
-    <select id="category" name="category">
-      <option value="">(AIにお任せ)</option>
-      {% for c in categories %}
-      <option value="{{ c }}">{{ c }}</option>
-      {% endfor %}
-    </select>
+  <div id="choicesArea" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;"></div>
 
-    <div class="checkbox-row">
-      <input type="checkbox" id="include_amazon" name="include_amazon" checked>
-      <label for="include_amazon" style="margin:0;font-weight:normal;">Amazon商品紹介を含める</label>
-    </div>
-    <div class="checkbox-row">
-      <input type="checkbox" id="include_image" name="include_image" checked>
-      <label for="include_image" style="margin:0;font-weight:normal;">アイキャッチ画像を自動設定する(Unsplash)</label>
-    </div>
+  <div id="readyArea" style="margin-top:14px;display:none;"></div>
 
-    <button type="submit" class="btn" style="margin-top:20px;">記事を生成</button>
+  <form id="chatForm" style="margin-top:14px;display:flex;gap:8px;">
+    <input type="text" id="chatInput" placeholder="どんな記事を書きたいか教えてください(例: 冬におすすめの外遊びおもちゃ)" style="flex:1;margin-top:0;" autocomplete="off">
+    <button type="submit" class="btn" id="chatSend">送信</button>
   </form>
+  <p style="color:#9ca3af;font-size:0.78rem;margin-top:8px;">選択肢をクリックするか、自由に文章で答えてください。</p>
 </div>
+
+<style>
+  .chat-bubble { max-width:80%; padding:10px 14px; border-radius:12px; font-size:0.9rem; line-height:1.5; white-space:pre-wrap; }
+  .chat-bubble.user { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:2px; }
+  .chat-bubble.assistant { align-self:flex-start; background:#f3f4f6; color:var(--text); border-bottom-left-radius:2px; }
+  .choice-chip { background:#fff; border:1px solid var(--accent); color:var(--accent); border-radius:16px; padding:6px 14px; font-size:0.85rem; cursor:pointer; }
+  .choice-chip:hover { background:var(--accent); color:#fff; }
+</style>
+
+<script>
+const chatLog = document.getElementById("chatLog");
+const choicesArea = document.getElementById("choicesArea");
+const readyArea = document.getElementById("readyArea");
+const chatForm = document.getElementById("chatForm");
+const chatInput = document.getElementById("chatInput");
+const chatSend = document.getElementById("chatSend");
+
+let history = [];
+let busy = false;
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s || "";
+  return div.innerHTML;
+}
+
+function addBubble(role, text) {
+  const div = document.createElement("div");
+  div.className = "chat-bubble " + role;
+  div.textContent = text;
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+addBubble("assistant", "こんにちは!どんな記事を書きたいか、自由に教えてください。テーマが漠然としていても大丈夫です、足りない部分はこちらから質問します。");
+
+function renderChoices(choices) {
+  choicesArea.innerHTML = "";
+  (choices || []).forEach(function (choice) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "choice-chip";
+    btn.textContent = choice;
+    btn.addEventListener("click", function () { sendMessage(choice); });
+    choicesArea.appendChild(btn);
+  });
+}
+
+function renderReady(data) {
+  readyArea.style.display = "block";
+  readyArea.innerHTML = `
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;">
+      <p style="margin:0 0 10px;color:#166534;">${escapeHtml(data.summary || "この内容で記事を作成します:")}</p>
+      <p style="margin:0 0 4px;font-size:0.85rem;"><strong>テーマ:</strong> ${escapeHtml(data.topic || "")}</p>
+      <p style="margin:0 0 10px;font-size:0.85rem;"><strong>カテゴリー:</strong> ${escapeHtml(data.category || "(AIにお任せ)")}</p>
+      <form action="/generate" method="post">
+        <input type="hidden" name="topic" value="${escapeHtml(data.topic || "")}">
+        <input type="hidden" name="category" value="${escapeHtml(data.category || "")}">
+        ${data.include_amazon ? '<input type="hidden" name="include_amazon" value="on">' : ""}
+        ${data.include_image ? '<input type="hidden" name="include_image" value="on">' : ""}
+        <button type="submit" class="btn">この内容で記事を作る &raquo;</button>
+      </form>
+    </div>`;
+  chatInput.disabled = true;
+  chatSend.disabled = true;
+}
+
+async function sendMessage(text) {
+  if (busy || !text.trim()) return;
+  busy = true;
+  choicesArea.innerHTML = "";
+  addBubble("user", text);
+  history.push({ role: "user", content: text });
+  chatInput.value = "";
+  chatInput.disabled = true;
+  chatSend.disabled = true;
+
+  const thinking = document.createElement("div");
+  thinking.className = "chat-bubble assistant";
+  thinking.textContent = "考え中...";
+  chatLog.appendChild(thinking);
+  chatLog.scrollTop = chatLog.scrollHeight;
+
+  try {
+    const res = await fetch("/chat/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ history }),
+    });
+    const data = await res.json();
+    thinking.remove();
+
+    if (!res.ok || data.type === "error") {
+      addBubble("assistant", "エラーが発生しました: " + (data.message || res.status));
+    } else if (data.type === "ready") {
+      addBubble("assistant", data.summary || "方向性が固まりました。");
+      history.push({ role: "assistant", content: JSON.stringify(data) });
+      renderReady(data);
+      return; // ready状態では入力を再度有効化しない
+    } else {
+      addBubble("assistant", data.question || "");
+      history.push({ role: "assistant", content: JSON.stringify(data) });
+      renderChoices(data.choices);
+    }
+  } catch (exc) {
+    thinking.remove();
+    addBubble("assistant", "通信エラーが発生しました: " + exc);
+  }
+
+  chatInput.disabled = false;
+  chatSend.disabled = false;
+  chatInput.focus();
+  busy = false;
+}
+
+chatForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  sendMessage(chatInput.value);
+});
+</script>
 
 {% endblock %}

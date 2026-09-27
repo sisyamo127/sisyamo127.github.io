@@ -185,7 +185,12 @@ def build_article_prompt(
 MIN_CONTENT_CHARS = 5000
 
 
-def _call_claude(messages: list, tools: list | None = None, max_tokens: int = 12000) -> tuple[str, dict]:
+def _call_claude(
+    messages: list,
+    tools: list | None = None,
+    max_tokens: int = 12000,
+    system: str | None = None,
+) -> tuple[str, dict]:
     """Claudeを呼び出し、(テキスト全文, パース済みJSON)を返す。
 
     toolsを渡すとサーバーサイドツール(Web検索など)を有効にできる。その場合、
@@ -202,6 +207,8 @@ def _call_claude(messages: list, tools: list | None = None, max_tokens: int = 12
     }
     if tools:
         payload["tools"] = tools
+    if system:
+        payload["system"] = system
 
     response = requests.post(
         ANTHROPIC_API_URL,
@@ -306,6 +313,49 @@ def fetch_existing_titles(limit: int = 50) -> list:
     )
     response.raise_for_status()
     return [p["title"]["rendered"] for p in response.json()]
+
+
+CHAT_SYSTEM_PROMPT = """あなたはおもちゃブログの編集者です。ユーザーと対話しながら、
+これから書く記事の方向性を固めるのが仕事です。
+
+最終的に固めたい情報:
+- topic: 記事のテーマ・切り口(具体的であるほど良い。店名・エリア・対象年齢・価格帯など
+  ユーザーから聞き出せた具体的な事実があれば必ず含める)
+- category: カテゴリー(候補: {categories})
+- include_amazon: 記事内にAmazon商品紹介を含めるか
+- include_image: アイキャッチ画像を自動設定するか
+
+ルール:
+- ユーザーの最初のメッセージだけで方向性が十分明確なら、無理に質問を重ねず、すぐready状態にしてよい
+- 情報が不足している場合は、一度に1つだけ質問すること
+- 質問は3〜4個程度の選択肢(choices)を用意すること。ユーザーは選択肢以外にも自由記述で
+  答えられるので、choicesは代表的なものだけでよい
+- 2〜3往復程度で十分な情報が集まったら、それ以上質問せずreadyにすること
+- 出力は必ず次のJSON形式のみで返すこと。JSON以外の文章やコードブロック記号は含めないこと
+
+質問する場合:
+{{"type": "question", "question": "質問文", "choices": ["選択肢1", "選択肢2", "選択肢3"]}}
+
+十分な情報が集まった場合:
+{{"type": "ready", "topic": "記事テーマの説明(具体的な事実を含める)", "category": "カテゴリー名",
+  "include_amazon": true, "include_image": true,
+  "summary": "ユーザーへの確認メッセージ(この内容で記事を作りますね、等)"}}
+"""
+
+
+def chat_step(history: list, categories: list, log=DEFAULT_LOG) -> dict:
+    """記事の方向性を固めるためのチャット1ターン分を処理する。
+
+    historyは[{"role": "user"|"assistant", "content": "..."}]の会話履歴
+    (最後がユーザーの発言であること)。質問(type=question)か、方向性が
+    固まった状態(type=ready)のいずれかを表すdictを返す。
+    """
+    category_names = "、".join(c["name"] for c in categories if c["name"] != "Uncategorized")
+    system = CHAT_SYSTEM_PROMPT.format(categories=category_names or "(カテゴリー未設定)")
+    messages = [{"role": h["role"], "content": h["content"]} for h in history]
+    _, result = _call_claude(messages, system=system, max_tokens=2000)
+    log(f"チャット応答: {result.get('type')}")
+    return result
 
 
 def generate_title_candidates(

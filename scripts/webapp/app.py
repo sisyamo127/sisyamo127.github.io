@@ -125,11 +125,29 @@ def dashboard():
     )
 
 
-# --- ステップ1: テーマ入力 → タイトル案 + SEOチェック -----------------------
+# --- ステップ1: チャットで記事の方向性を固める → タイトル案 + SEOチェック --
 
 @app.route("/generate", methods=["GET"])
 def generate_form():
     return render_template("generate.html", active="generate", categories=get_categories())
+
+
+@app.route("/chat/message", methods=["POST"])
+def chat_message():
+    """チャット1ターン分を処理する(ジョブ化せず同期的に返す)。"""
+    data = request.get_json(force=True)
+    history = data.get("history", [])
+    if not history or history[-1].get("role") != "user":
+        abort(400)
+    try:
+        categories = ga.fetch_categories()
+    except Exception:
+        categories = []
+    try:
+        result = ga.chat_step(history, categories)
+    except Exception as exc:
+        return {"type": "error", "message": str(exc)}, 500
+    return result
 
 
 @app.route("/generate", methods=["POST"])
