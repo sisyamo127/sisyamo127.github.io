@@ -56,8 +56,8 @@ def save_chats(chats: list) -> None:
             json.dump(chats, f, ensure_ascii=False, indent=2)
 
 
-def upsert_chat(chat_id: str, history: list, status: str = "in_progress") -> None:
-    """チャット1件を保存(新規なら作成、既存ならhistory/updated_atを更新)する。"""
+def upsert_chat(chat_id: str, history: list, status: str = "in_progress", usage: dict | None = None) -> None:
+    """チャット1件を保存(新規なら作成、既存ならhistory/updated_at/usageを更新)する。"""
     chats = load_chats()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for c in chats:
@@ -65,10 +65,13 @@ def upsert_chat(chat_id: str, history: list, status: str = "in_progress") -> Non
             c["history"] = history
             c["updated_at"] = now
             c["status"] = status
+            if usage is not None:
+                c["usage"] = usage
             save_chats(chats)
             return
     chats.insert(0, {
         "id": chat_id, "created_at": now, "updated_at": now, "history": history, "status": status,
+        "usage": usage or {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0},
     })
     save_chats(chats)
 
@@ -216,13 +219,19 @@ def chat_message():
         categories = ga.fetch_categories()
     except Exception:
         categories = []
+    ga.reset_usage()
     try:
         result = ga.chat_step(history, categories)
     except Exception as exc:
         return {"type": "error", "message": str(exc)}, 500
+    turn_usage = ga.get_usage_summary()
+
+    existing_chat = get_chat(chat_id)
+    prior_usage = existing_chat.get("usage") if existing_chat else None
+    total_usage = ga.sum_usage(prior_usage, turn_usage)
 
     assistant_turn = {"role": "assistant", "content": json.dumps(result, ensure_ascii=False)}
-    upsert_chat(chat_id, history + [assistant_turn], status="in_progress")
+    upsert_chat(chat_id, history + [assistant_turn], status="in_progress", usage=total_usage)
 
     result["chat_id"] = chat_id
     return result
@@ -235,7 +244,11 @@ def generate_titles_submit():
     include_amazon = request.form.get("include_amazon") == "on"
     include_image = request.form.get("include_image") == "on"
     chat_id = request.form.get("chat_id", "").strip()
+    chat_usage = None
     if chat_id:
+        chat = get_chat(chat_id)
+        if chat:
+            chat_usage = chat.get("usage")
         mark_chat_submitted(chat_id)
 
     def task(log):
@@ -267,7 +280,7 @@ def generate_titles_submit():
             "include_amazon": include_amazon,
             "include_image": include_image,
             "candidates": merged,
-            "usage": ga.get_usage_summary(),
+            "usage": ga.sum_usage(chat_usage, ga.get_usage_summary()),
         }
 
     job_id = start_job(task)
@@ -310,7 +323,7 @@ def select_title():
             "outline": outline,
             "include_amazon": data["include_amazon"],
             "include_image": data["include_image"],
-            "usage": ga.get_usage_summary(),
+            "usage": ga.sum_usage(data.get("usage"), ga.get_usage_summary()),
         }
 
     job_id = start_job(task)
@@ -341,13 +354,16 @@ def revise_outline_route():
         categories = ga.fetch_categories()
     except Exception:
         categories = []
+    ga.reset_usage()
     try:
         revised = ga.revise_outline(job["result"]["outline"], feedback, categories)
     except Exception as exc:
         return {"error": str(exc)}, 500
+    revise_usage = ga.get_usage_summary()
 
     with _jobs_lock:
         job["result"]["outline"] = revised
+        job["result"]["usage"] = ga.sum_usage(job["result"].get("usage"), revise_usage)
     return {"outline": revised}
 
 
@@ -360,6 +376,7 @@ def approve_outline():
     if outline_job is None or outline_job.get("status") != "done":
         abort(400)
     data = outline_job["result"]
+    outline_usage = data.get("usage")
 
     def task(log):
         result = ga.run_pipeline_from_outline(
@@ -384,7 +401,7 @@ def approve_outline():
             "fact_check_issues": result.get("fact_check_issues", []),
             "fact_check_fixed": result.get("fact_check_fixed", False),
             "error": result["error"],
-            "usage": ga.get_usage_summary(),
+            "usage": ga.sum_usage(outline_usage, ga.get_usage_summary()),
         }
         save_history_entry(entry)
         return entry
@@ -456,6 +473,7 @@ def rewrite_confirm():
     if preview_job is None or preview_job.get("status") != "done":
         abort(400)
     data = preview_job["result"]
+    rewrite_usage = data.get("usage")
 
     def task(log):
         categories = ga.fetch_categories()
@@ -483,7 +501,7 @@ def rewrite_confirm():
             "fact_check_issues": result.get("fact_check_issues", []),
             "fact_check_fixed": result.get("fact_check_fixed", False),
             "error": result["error"],
-            "usage": ga.get_usage_summary(),
+            "usage": ga.sum_usage(rewrite_usage, ga.get_usage_summary()),
         }
         save_history_entry(entry)
         return entry
