@@ -28,6 +28,10 @@
     <div class="label">失敗</div>
     <div class="value">{{ error_count }}</div>
   </div>
+  <div class="stat-card">
+    <div class="label">今週のAPI利用料(概算)</div>
+    <div class="value">${{ "%.4f"|format(this_week_cost_usd) }}</div>
+  </div>
 </div>
 
 <div class="card">

@@ -47,6 +47,11 @@ function renderCandidates(candidates) {
   candidatesEl.innerHTML = html;
 }
 
+function renderUsage(usage) {
+  if (!usage) return "";
+  return `<p style="color:#6b7280;font-size:0.78rem;margin-top:10px;">API利用量: 入力${usage.input_tokens.toLocaleString()}トークン / 出力${usage.output_tokens.toLocaleString()}トークン(概算費用 $${usage.cost_usd.toFixed(4)})</p>`;
+}
+
 async function poll() {
   const res = await fetch(`/jobs/${jobId}/data`);
   const data = await res.json();
@@ -55,6 +60,7 @@ async function poll() {
   if (data.status === "done") {
     statusEl.textContent = "候補が揃いました。1つ選んでください。";
     renderCandidates(data.result.candidates);
+    candidatesEl.insertAdjacentHTML("beforeend", renderUsage(data.result.usage));
     return;
   }
   if (data.status === "error") {

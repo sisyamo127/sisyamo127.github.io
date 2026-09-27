@@ -7,13 +7,14 @@
   <input type="text" id="searchBox" placeholder="タイトル・カテゴリーで検索..." style="margin-bottom:16px;">
   {% if history %}
   <table id="historyTable">
-    <tr><th>日時</th><th>タイトル</th><th>カテゴリー</th><th>文字数</th><th>状態</th></tr>
+    <tr><th>日時</th><th>タイトル</th><th>カテゴリー</th><th>文字数</th><th>API費用</th><th>状態</th></tr>
     {% for item in history %}
     <tr>
       <td>{{ item.created_at }}</td>
       <td>{{ item.title }}</td>
       <td>{{ item.category }}</td>
       <td>{{ item.char_count }}</td>
+      <td>{% if item.usage %}${{ "%.4f"|format(item.usage.cost_usd) }}{% else %}-{% endif %}</td>
       <td>
         {% if item.wp_link %}
         <a class="link" href="{{ item.wp_link }}" target="_blank">下書きを開く</a>

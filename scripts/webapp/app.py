@@ -70,6 +70,7 @@ def start_job(fn) -> str:
 
     def runner():
         try:
+            ga.reset_usage()
             result = fn(log)
             with _jobs_lock:
                 _jobs[job_id]["status"] = "done"
@@ -106,6 +107,11 @@ def dashboard():
     )
     success_count = sum(1 for h in history if h.get("wp_link"))
     error_count = sum(1 for h in history if not h.get("wp_link"))
+    this_week_cost_usd = sum(
+        h.get("usage", {}).get("cost_usd", 0)
+        for h in history
+        if datetime.strptime(h["created_at"], "%Y-%m-%d %H:%M:%S") >= week_ago
+    )
     return render_template(
         "dashboard.html",
         active="home",
@@ -113,6 +119,7 @@ def dashboard():
         this_week_count=this_week_count,
         success_count=success_count,
         error_count=error_count,
+        this_week_cost_usd=this_week_cost_usd,
     )
 
 
@@ -159,6 +166,7 @@ def generate_titles_submit():
             "include_amazon": include_amazon,
             "include_image": include_image,
             "candidates": merged,
+            "usage": ga.get_usage_summary(),
         }
 
     job_id = start_job(task)
@@ -199,6 +207,7 @@ def select_title():
             "outline": outline,
             "include_amazon": data["include_amazon"],
             "include_image": data["include_image"],
+            "usage": ga.get_usage_summary(),
         }
 
     job_id = start_job(task)
@@ -242,6 +251,7 @@ def approve_outline():
             "wp_link": result["wp_link"],
             "local_path": result["local_path"],
             "error": result["error"],
+            "usage": ga.get_usage_summary(),
         }
         save_history_entry(entry)
         return entry
@@ -287,6 +297,7 @@ def rewrite_start():
             "article": article,
             "include_amazon": include_amazon,
             "include_image": include_image,
+            "usage": ga.get_usage_summary(),
         }
 
     job_id = start_job(task)
@@ -331,6 +342,7 @@ def rewrite_confirm():
             "wp_link": result["wp_link"],
             "local_path": result["local_path"],
             "error": result["error"],
+            "usage": ga.get_usage_summary(),
         }
         save_history_entry(entry)
         return entry
