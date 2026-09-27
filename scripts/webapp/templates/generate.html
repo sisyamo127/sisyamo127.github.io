@@ -11,7 +11,10 @@
 
   <div id="confirmArea" style="margin-top:14px;display:none;flex-shrink:0;"></div>
 
-  <form id="chatForm" style="margin-top:14px;display:flex;gap:8px;flex-shrink:0;">
+  <div style="display:flex;justify-content:flex-end;margin-top:14px;flex-shrink:0;">
+    <button type="button" id="stopBtn" class="btn secondary" style="font-size:0.78rem;padding:6px 12px;">■ 中断して最初から</button>
+  </div>
+  <form id="chatForm" style="margin-top:8px;display:flex;gap:8px;flex-shrink:0;">
     <input type="text" id="chatInput" placeholder="どんな記事を書きたいか教えてください(例: 冬におすすめの外遊びおもちゃ)" style="flex:1;margin-top:0;" autocomplete="off">
     <button type="submit" class="btn" id="chatSend">送信</button>
   </form>
@@ -38,8 +41,10 @@ const chatForm = document.getElementById("chatForm");
 const chatInput = document.getElementById("chatInput");
 const chatSend = document.getElementById("chatSend");
 const chatHint = document.getElementById("chatHint");
+const stopBtn = document.getElementById("stopBtn");
 
 const resumableChats = {{ resumable_chats | tojson }};
+const DEFAULT_HINT = "選択肢をクリックするか、自由に文章で答えてください。";
 
 let history = [];
 let chatId = null;
@@ -47,6 +52,34 @@ let busy = false;
 // phase: "chat"(方向性の対話) | "outline_review"(構成案の確認・自由記述で部分修正)
 let phase = "chat";
 let outlineJobId = null;
+// stopBtnが押されるたびに増える。進行中のポーリングはこれが変わったら中断する。
+let generation = 0;
+
+class Cancelled extends Error {}
+
+function resetChat(message) {
+  generation++;
+  chatId = null;
+  history = [];
+  phase = "chat";
+  outlineJobId = null;
+  busy = false;
+  chatLog.innerHTML = "";
+  choicesArea.innerHTML = "";
+  confirmArea.style.display = "none";
+  confirmArea.innerHTML = "";
+  chatHint.textContent = DEFAULT_HINT;
+  chatInput.disabled = false;
+  chatSend.disabled = false;
+  chatInput.value = "";
+  addBubble("assistant", message);
+  renderResumeList();
+  chatInput.focus();
+}
+
+stopBtn.addEventListener("click", function () {
+  resetChat("中断しました。新しいチャットを始めます。どんな記事を書きたいか教えてください。");
+});
 
 function escapeHtml(s) {
   const div = document.createElement("div");
@@ -131,8 +164,9 @@ function renderChoices(choices) {
   });
 }
 
-async function pollJob(jobId) {
+async function pollJob(jobId, myGeneration) {
   for (;;) {
+    if (myGeneration !== generation) throw new Cancelled();
     const res = await fetch(`/jobs/${jobId}/data`);
     const data = await res.json();
     if (data.status === "done") return data.result;
@@ -142,8 +176,9 @@ async function pollJob(jobId) {
 }
 
 async function startTitleGeneration(readyData) {
+  const myGeneration = generation;
   choicesArea.innerHTML = "";
-  const thinking = addBubble("assistant", "タイトル案を考えています...(少々お待ちください)");
+  const thinking = addBubble("assistant", "タイトル案を考えています...(少々お待ちください。気が変わったら「■ 中断して最初から」で止められます)");
   try {
     const formData = new FormData();
     formData.append("topic", readyData.topic || "");
@@ -156,17 +191,25 @@ async function startTitleGeneration(readyData) {
       method: "POST", body: formData, headers: { "X-Requested-With": "fetch-chat" },
     });
     const { job_id } = await res.json();
-    const result = await pollJob(job_id);
+    const result = await pollJob(job_id, myGeneration);
+    if (myGeneration !== generation) return;
     thinking.remove();
     renderTitleCandidates(result.candidates, job_id);
+    chatInput.disabled = false;
+    chatSend.disabled = false;
+    chatHint.textContent = "気に入ったタイトルがあればクリックしてください。他の案がよければ、入力欄に希望を書いて送信してください。";
   } catch (exc) {
+    if (exc instanceof Cancelled) return;
     thinking.remove();
     addBubble("assistant", "タイトル案の生成に失敗しました: " + exc);
+    chatInput.disabled = false;
+    chatSend.disabled = false;
   }
 }
 
 function renderTitleCandidates(candidates, titlesJobId) {
-  let html = "<p style=\"margin:0 0 10px;\">タイトル案ができました。気に入ったものを選んでください:</p>";
+  const myGeneration = generation;
+  let html = "<p style=\"margin:0 0 10px;\">タイトル案ができました。気に入ったものを選んでください(なければ入力欄に自由に書いてください):</p>";
   candidates.forEach(function (c, i) {
     const badge = c.verdict === "ok"
       ? '<span class="badge ok">OK</span>'
@@ -181,6 +224,7 @@ function renderTitleCandidates(candidates, titlesJobId) {
   const bubble = addHtmlBubble(html);
   bubble.querySelectorAll(".title-card").forEach(function (btn) {
     btn.addEventListener("click", function () {
+      if (myGeneration !== generation) return;
       const idx = Number(btn.dataset.index);
       selectTitle(idx, candidates[idx], titlesJobId);
     });
@@ -188,7 +232,10 @@ function renderTitleCandidates(candidates, titlesJobId) {
 }
 
 async function selectTitle(index, chosen, titlesJobId) {
+  const myGeneration = generation;
   addBubble("user", chosen.title);
+  chatInput.disabled = true;
+  chatSend.disabled = true;
   const thinking = addBubble("assistant", "構成案(見出しの流れ)を考えています...");
   try {
     const formData = new FormData();
@@ -198,13 +245,17 @@ async function selectTitle(index, chosen, titlesJobId) {
       method: "POST", body: formData, headers: { "X-Requested-With": "fetch-chat" },
     });
     const { job_id } = await res.json();
-    const result = await pollJob(job_id);
+    const result = await pollJob(job_id, myGeneration);
+    if (myGeneration !== generation) return;
     thinking.remove();
     outlineJobId = job_id;
     renderOutline(result.outline);
   } catch (exc) {
+    if (exc instanceof Cancelled) return;
     thinking.remove();
     addBubble("assistant", "構成案の作成に失敗しました: " + exc);
+    chatInput.disabled = false;
+    chatSend.disabled = false;
   }
 }
 
@@ -222,6 +273,8 @@ function renderOutline(outline) {
 
   phase = "outline_review";
   chatHint.textContent = "この内容でよければ下のボタンを押してください。修正したい場合は、入力欄に直接どう直したいか書いて送信してください(例: 6番目の見出しを○○に変えて)。";
+  chatInput.disabled = false;
+  chatSend.disabled = false;
 
   confirmArea.style.display = "block";
   confirmArea.innerHTML = `
@@ -232,6 +285,7 @@ function renderOutline(outline) {
 }
 
 async function reviseOutline(feedback) {
+  const myGeneration = generation;
   const thinking = addBubble("assistant", "構成案を修正しています...");
   try {
     const res = await fetch("/generate/revise-outline", {
@@ -240,6 +294,7 @@ async function reviseOutline(feedback) {
       body: JSON.stringify({ job_id: outlineJobId, feedback: feedback }),
     });
     const data = await res.json();
+    if (myGeneration !== generation) return;
     thinking.remove();
     if (!res.ok || data.error) {
       addBubble("assistant", "修正に失敗しました: " + (data.error || res.status));
@@ -247,6 +302,7 @@ async function reviseOutline(feedback) {
       renderOutline(data.outline);
     }
   } catch (exc) {
+    if (myGeneration !== generation) return;
     thinking.remove();
     addBubble("assistant", "通信エラーが発生しました: " + exc);
   }
@@ -255,6 +311,7 @@ async function reviseOutline(feedback) {
 async function sendMessage(text) {
   if (busy || !text.trim()) return;
   busy = true;
+  const myGeneration = generation;
   choicesArea.innerHTML = "";
   addBubble("user", text);
   chatInput.value = "";
@@ -263,6 +320,7 @@ async function sendMessage(text) {
 
   if (phase === "outline_review") {
     await reviseOutline(text);
+    if (myGeneration !== generation) return;
     chatInput.disabled = false;
     chatSend.disabled = false;
     chatInput.focus();
@@ -297,6 +355,7 @@ async function sendMessage(text) {
         chatInput.disabled = true;
         chatSend.disabled = true;
         await startTitleGeneration(data);
+        if (myGeneration !== generation) return;
         busy = false;
         return; // タイトル選択以降はこの関数の外(ボタン操作)で進む
       }
@@ -308,6 +367,7 @@ async function sendMessage(text) {
     addBubble("assistant", "通信エラーが発生しました: " + exc);
   }
 
+  if (myGeneration !== generation) return;
   chatInput.disabled = false;
   chatSend.disabled = false;
   chatInput.focus();
