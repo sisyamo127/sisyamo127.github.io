@@ -252,6 +252,8 @@ def approve_outline():
             "char_count": result["char_count"],
             "wp_link": result["wp_link"],
             "local_path": result["local_path"],
+            "fact_check_issues": result.get("fact_check_issues", []),
+            "fact_check_fixed": result.get("fact_check_fixed", False),
             "error": result["error"],
             "usage": ga.get_usage_summary(),
         }
@@ -347,6 +349,8 @@ def rewrite_confirm():
             "char_count": result["char_count"],
             "wp_link": result["wp_link"],
             "local_path": result["local_path"],
+            "fact_check_issues": result.get("fact_check_issues", []),
+            "fact_check_fixed": result.get("fact_check_fixed", False),
             "error": result["error"],
             "usage": ga.get_usage_summary(),
         }
