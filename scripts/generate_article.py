@@ -12,6 +12,8 @@ Cocoonテーマのふきだし/マーカー、Amazon購入ボタン)に合わせ
   WP_USERNAME           WordPressユーザー名
   WP_APP_PASSWORD       WordPressのアプリケーションパスワード
   ANTHROPIC_MODEL       (任意) 使用するモデルID。省略時は claude-sonnet-5
+  UNSPLASH_ACCESS_KEY   (任意) アイキャッチ画像の自動取得に使用
+  OPENAI_API_KEY        (任意) 画像生成機能(generate_image_with_openai)に使用
 
 必要なライブラリ: requirements.txt を参照 (pip install -r scripts/requirements.txt)
 
@@ -810,31 +812,78 @@ def fetch_unsplash_image_url(keyword: str) -> str | None:
     return results[0]["urls"]["regular"]
 
 
-def upload_featured_image(image_url: str, filename: str) -> int | None:
-    """画像URLをダウンロードしてWordPressメディアライブラリにアップロードし、メディアIDを返す。"""
+def upload_image_bytes_to_wp(image_bytes: bytes, filename: str, mime_type: str = "image/jpeg") -> dict:
+    """画像バイト列をWordPressメディアライブラリにアップロードし、{"id":.., "url":..}を返す。"""
     wp_url = os.environ["WP_URL"].rstrip("/")
     username = os.environ["WP_USERNAME"]
     app_password = os.environ["WP_APP_PASSWORD"]
-
-    image_response = requests.get(image_url, headers={"User-Agent": BROWSER_USER_AGENT}, timeout=60)
-    image_response.raise_for_status()
 
     response = requests.post(
         f"{wp_url}/wp-json/wp/v2/media",
         auth=(username, app_password),
         headers={
             "User-Agent": BROWSER_USER_AGENT,
-            "Content-Disposition": f'attachment; filename="{filename}.jpg"',
-            "Content-Type": "image/jpeg",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Type": mime_type,
         },
-        data=image_response.content,
+        data=image_bytes,
         timeout=60,
     )
     if not response.ok:
         raise RuntimeError(
-            f"アイキャッチ画像のアップロードに失敗しました (HTTP {response.status_code}): {response.text}"
+            f"画像のアップロードに失敗しました (HTTP {response.status_code}): {response.text}"
         )
-    return response.json().get("id")
+    media = response.json()
+    return {"id": media.get("id"), "url": media.get("source_url")}
+
+
+def upload_featured_image(image_url: str, filename: str) -> int | None:
+    """画像URLをダウンロードしてWordPressメディアライブラリにアップロードし、メディアIDを返す。"""
+    image_response = requests.get(image_url, headers={"User-Agent": BROWSER_USER_AGENT}, timeout=60)
+    image_response.raise_for_status()
+    media = upload_image_bytes_to_wp(image_response.content, f"{filename}.jpg", "image/jpeg")
+    return media["id"]
+
+
+def generate_image_with_openai(prompt: str, size: str = "1024x1024") -> bytes:
+    """OpenAIの画像生成API(gpt-image-1)で画像を生成し、画像バイト列(PNG)を返す。
+
+    OPENAI_API_KEYが必要。OpenAI側のAPI仕様変更により動作しない場合は、
+    .envのOPENAI_API_KEYやモデル名の見直しが必要な場合がある。
+    """
+    api_key = os.environ["OPENAI_API_KEY"]
+    response = requests.post(
+        "https://api.openai.com/v1/images/generations",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": "gpt-image-1", "prompt": prompt, "size": size, "n": 1},
+        timeout=120,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"OpenAI画像生成に失敗しました (HTTP {response.status_code}): {response.text}"
+        )
+    item = response.json()["data"][0]
+    if item.get("b64_json"):
+        import base64
+
+        return base64.b64decode(item["b64_json"])
+    if item.get("url"):
+        image_response = requests.get(item["url"], timeout=60)
+        image_response.raise_for_status()
+        return image_response.content
+    raise RuntimeError("OpenAIの応答から画像データを取得できませんでした")
+
+
+def insert_image_after_heading(content: str, heading_index: int, image_url: str, alt_text: str = "") -> str:
+    """content内のheading_index番目(0始まり)のh2見出しの直後に画像を挿入する。
+    見出しが見つからない場合は本文末尾に追加する。
+    """
+    img_tag = f'\n<img src="{image_url}" alt="{alt_text}" style="max-width:100%;height:auto;">\n'
+    matches = list(re.finditer(r"<h2[^>]*>.*?</h2>", content, re.DOTALL))
+    if heading_index < 0 or heading_index >= len(matches):
+        return content + img_tag
+    insert_pos = matches[heading_index].end()
+    return content[:insert_pos] + img_tag + content[insert_pos:]
 
 
 def post_to_wordpress_draft(
@@ -1098,6 +1147,8 @@ def finalize_and_publish(
         "char_count": _content_char_count(full_content),
         "local_path": None,
         "wp_link": None,
+        "post_id": None,
+        "content": full_content,
         "fact_check_issues": [],
         "fact_check_fixed": False,
         "error": None,
@@ -1127,6 +1178,7 @@ def finalize_and_publish(
             )
             log(f"WordPressに下書き保存しました: {link}")
         result["wp_link"] = link
+        result["post_id"] = post_id
 
         log("② 内容確認: 事実確認(Web検索)を行っています...")
         try:
@@ -1160,6 +1212,7 @@ def finalize_and_publish(
     filepath = save_article_locally(article, full_content)
     log(f"記事をローカルに保存しました: {filepath}")
     result["local_path"] = filepath
+    result["content"] = full_content
 
     return result
 
