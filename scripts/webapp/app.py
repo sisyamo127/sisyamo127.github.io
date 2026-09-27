@@ -270,6 +270,8 @@ def approve_outline():
             "char_count": result["char_count"],
             "wp_link": result["wp_link"],
             "local_path": result["local_path"],
+            "post_id": result.get("post_id"),
+            "content": result.get("content", ""),
             "fact_check_issues": result.get("fact_check_issues", []),
             "fact_check_fixed": result.get("fact_check_fixed", False),
             "error": result["error"],
@@ -367,6 +369,8 @@ def rewrite_confirm():
             "char_count": result["char_count"],
             "wp_link": result["wp_link"],
             "local_path": result["local_path"],
+            "post_id": result.get("post_id"),
+            "content": result.get("content", ""),
             "fact_check_issues": result.get("fact_check_issues", []),
             "fact_check_fixed": result.get("fact_check_fixed", False),
             "error": result["error"],
@@ -492,6 +496,64 @@ def job_status_data(job_id: str):
         "result": job.get("result"),
         "error": job.get("error"),
     }
+
+
+# --- 画像の追加(アイキャッチ・本文への差し込み) -----------------------------
+
+@app.route("/jobs/<job_id>/images", methods=["POST"])
+def job_add_images(job_id: str):
+    job = get_job(job_id)
+    if job is None or job.get("status") != "done" or not isinstance(job.get("result"), dict):
+        abort(404)
+    result = job["result"]
+    post_id = result.get("post_id")
+    content = result.get("content", "")
+    if post_id is None:
+        return {"ok": False, "errors": ["この記事のWordPress投稿IDが見つかりません"]}, 400
+
+    slot_count = int(request.form.get("slot_count", "0"))
+    featured_media_id = None
+    errors = []
+
+    for i in range(slot_count):
+        target = request.form.get(f"slot_{i}_target", "")
+        mode = request.form.get(f"slot_{i}_mode", "")
+        try:
+            if mode == "upload":
+                file = request.files.get(f"slot_{i}_file")
+                if not file or not file.filename:
+                    continue
+                image_bytes = file.read()
+                mime_type = file.mimetype or "image/jpeg"
+                filename = file.filename
+            elif mode == "generate":
+                prompt = request.form.get(f"slot_{i}_prompt", "").strip()
+                if not prompt:
+                    continue
+                image_bytes = ga.generate_image_with_openai(prompt)
+                mime_type = "image/png"
+                filename = f"generated-{i}.png"
+            else:
+                continue
+
+            media = ga.upload_image_bytes_to_wp(image_bytes, filename, mime_type)
+
+            if target == "featured":
+                featured_media_id = media["id"]
+            elif target.startswith("heading_"):
+                heading_index = int(target.split("_")[1])
+                content = ga.insert_image_after_heading(content, heading_index, media["url"])
+        except Exception as exc:
+            errors.append(f"画像{i + 1}: {exc}")
+
+    try:
+        link, _ = ga.update_wordpress_post(post_id, result["title"], content, None, featured_media_id)
+        with _jobs_lock:
+            result["content"] = content
+            result["wp_link"] = link
+        return {"ok": True, "wp_link": link, "errors": errors}
+    except Exception as exc:
+        return {"ok": False, "errors": errors + [f"WordPressの更新に失敗しました: {exc}"]}, 500
 
 
 if __name__ == "__main__":

@@ -22,6 +22,114 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+function renderImagesArea(r) {
+  const headingMatches = [...(r.content || "").matchAll(/<h2[^>]*>(.*?)<\/h2>/gs)];
+  const headings = headingMatches.map(function (m) { return m[1].replace(/<[^>]+>/g, ""); });
+
+  let slotCount = 0;
+  const slotsEl = document.createElement("div");
+  const container = document.createElement("div");
+  container.style.cssText = "background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-top:14px;";
+  container.innerHTML = `<p style="margin:0 0 10px;font-weight:bold;">画像を追加</p>`;
+  container.appendChild(slotsEl);
+
+  function targetOptionsHtml() {
+    let opts = `<option value="featured">アイキャッチ画像</option>`;
+    headings.forEach(function (h, i) {
+      opts += `<option value="heading_${i}">見出し「${escapeHtml(h)}」の下</option>`;
+    });
+    return opts;
+  }
+
+  function addSlot() {
+    const idx = slotCount++;
+    const div = document.createElement("div");
+    div.style.cssText = "border:1px solid #e5e7eb;border-radius:6px;padding:10px;margin-bottom:10px;background:#fff;";
+    div.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select name="slot_${idx}_mode" class="slot-mode" style="width:auto;margin:0;">
+          <option value="upload">画像をアップロード</option>
+          <option value="generate">AIで生成(OpenAI)</option>
+        </select>
+        <select name="slot_${idx}_target" style="width:auto;margin:0;">${targetOptionsHtml()}</select>
+      </div>
+      <div class="slot-upload" style="margin-top:8px;">
+        <input type="file" name="slot_${idx}_file" accept="image/*">
+      </div>
+      <div class="slot-generate" style="margin-top:8px;display:none;">
+        <input type="text" name="slot_${idx}_prompt" placeholder="生成したい画像の説明(例: 木製の積み木で遊ぶ子供のイラスト)" style="margin:0;">
+      </div>`;
+    const modeSel = div.querySelector(".slot-mode");
+    const uploadDiv = div.querySelector(".slot-upload");
+    const genDiv = div.querySelector(".slot-generate");
+    modeSel.addEventListener("change", function () {
+      uploadDiv.style.display = modeSel.value === "upload" ? "block" : "none";
+      genDiv.style.display = modeSel.value === "generate" ? "block" : "none";
+    });
+    slotsEl.appendChild(div);
+  }
+
+  addSlot();
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "btn secondary";
+  addBtn.textContent = "+ 画像を追加";
+  addBtn.style.marginTop = "4px";
+  addBtn.addEventListener("click", addSlot);
+  container.appendChild(addBtn);
+
+  const submitBtn = document.createElement("button");
+  submitBtn.type = "button";
+  submitBtn.className = "btn";
+  submitBtn.textContent = "画像を反映する";
+  submitBtn.style.cssText = "margin-top:12px;margin-left:8px;";
+  const statusMsg = document.createElement("p");
+  statusMsg.style.cssText = "margin-top:10px;font-size:0.85rem;";
+
+  submitBtn.addEventListener("click", async function () {
+    submitBtn.disabled = true;
+    statusMsg.style.color = "#6b7280";
+    statusMsg.textContent = "処理中...(AI生成を含む場合は時間がかかります)";
+    const formData = new FormData();
+    formData.append("slot_count", String(slotCount));
+    for (let i = 0; i < slotCount; i++) {
+      const modeEl = slotsEl.querySelector(`select[name="slot_${i}_mode"]`);
+      if (!modeEl) continue;
+      const targetEl = slotsEl.querySelector(`select[name="slot_${i}_target"]`);
+      formData.append(`slot_${i}_mode`, modeEl.value);
+      formData.append(`slot_${i}_target`, targetEl.value);
+      if (modeEl.value === "upload") {
+        const fileEl = slotsEl.querySelector(`input[name="slot_${i}_file"]`);
+        if (fileEl && fileEl.files[0]) formData.append(`slot_${i}_file`, fileEl.files[0]);
+      } else {
+        const promptEl = slotsEl.querySelector(`input[name="slot_${i}_prompt"]`);
+        if (promptEl) formData.append(`slot_${i}_prompt`, promptEl.value);
+      }
+    }
+    try {
+      const res = await fetch(`/jobs/${jobId}/images`, { method: "POST", body: formData });
+      const data = await res.json();
+      if (data.ok) {
+        statusMsg.style.color = "#16a34a";
+        statusMsg.textContent = "画像を反映しました。" +
+          (data.errors && data.errors.length ? " (一部失敗: " + data.errors.join(", ") + ")" : "");
+      } else {
+        statusMsg.style.color = "#c00";
+        statusMsg.textContent = "失敗しました: " + (data.errors || []).join(", ");
+      }
+    } catch (exc) {
+      statusMsg.style.color = "#c00";
+      statusMsg.textContent = "通信エラー: " + exc;
+    }
+    submitBtn.disabled = false;
+  });
+
+  container.appendChild(submitBtn);
+  container.appendChild(statusMsg);
+  resultEl.appendChild(container);
+}
+
 async function poll() {
   const res = await fetch(`/jobs/${jobId}/data`);
   const data = await res.json();
@@ -60,6 +168,9 @@ async function poll() {
       html += `<p style="color:#6b7280;font-size:0.78rem;margin-top:10px;">API利用量: 入力${r.usage.input_tokens.toLocaleString()}トークン / 出力${r.usage.output_tokens.toLocaleString()}トークン(概算費用 $${r.usage.cost_usd.toFixed(4)})</p>`;
     }
     resultEl.innerHTML = html;
+    if (r.post_id) {
+      renderImagesArea(r);
+    }
     return;
   }
   if (data.status === "error") {
