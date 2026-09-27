@@ -495,6 +495,34 @@ SEOで狙うキーワード:「{target_keyword}」
     return data
 
 
+def revise_outline(outline: dict, feedback: str, categories: list, log=DEFAULT_LOG) -> dict:
+    """既存の構成案(outline)を、ユーザーからの自由記述の修正指示(feedback)に沿って
+    部分的に修正し、同じJSON形式で返す。指示されていない部分は変更しない。
+    """
+    category_names = "、".join(c["name"] for c in categories if c["name"] != "Uncategorized")
+    prompt = f"""以下は「おもちゃミュージアム」というブログの、承認前の記事構成案(アウトライン)です。
+ユーザーから修正の指示がありました。指示された箇所だけを修正し、それ以外はそのまま維持してください。
+
+## 現在の構成案
+{json.dumps(outline, ensure_ascii=False, indent=2)}
+
+## ユーザーからの修正指示
+{feedback}
+
+## 制約
+- categoryは次のいずれかから選ぶこと(新しいカテゴリー名を作らないこと): {category_names}
+- outlineの見出し数は5〜7個を維持すること
+- product_mentionsのheadingは、修正後のoutlineのheadingと一致させること
+
+修正後の構成案全体を、元と同じJSON形式(title, seo_title, meta_description, keywords, category,
+reader_persona, reader_question, yu_answer, mid_question, mid_answer, closing_comment,
+amazon_search_keyword, outline, product_mentions)で、必ずJSONのみ返してください。
+"""
+    _, data = _call_claude([{"role": "user", "content": prompt}])
+    log("構成案を修正しました。")
+    return data
+
+
 def build_content_prompt_from_outline(outline: dict) -> str:
     outline_lines = "\n".join(
         f"- {o['heading']}: {o['summary']}" for o in outline.get("outline", [])

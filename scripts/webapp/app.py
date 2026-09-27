@@ -36,8 +36,57 @@ import generate_article as ga  # noqa: E402
 app = Flask(__name__)
 
 HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+CHATS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chats.json")
 _jobs = {}
 _jobs_lock = threading.Lock()
+_chats_lock = threading.Lock()
+
+
+def load_chats() -> list:
+    with _chats_lock:
+        if not os.path.exists(CHATS_PATH):
+            return []
+        with open(CHATS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+
+
+def save_chats(chats: list) -> None:
+    with _chats_lock:
+        with open(CHATS_PATH, "w", encoding="utf-8") as f:
+            json.dump(chats, f, ensure_ascii=False, indent=2)
+
+
+def upsert_chat(chat_id: str, history: list, status: str = "in_progress") -> None:
+    """チャット1件を保存(新規なら作成、既存ならhistory/updated_atを更新)する。"""
+    chats = load_chats()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for c in chats:
+        if c["id"] == chat_id:
+            c["history"] = history
+            c["updated_at"] = now
+            c["status"] = status
+            save_chats(chats)
+            return
+    chats.insert(0, {
+        "id": chat_id, "created_at": now, "updated_at": now, "history": history, "status": status,
+    })
+    save_chats(chats)
+
+
+def get_chat(chat_id: str) -> dict | None:
+    for c in load_chats():
+        if c["id"] == chat_id:
+            return c
+    return None
+
+
+def mark_chat_submitted(chat_id: str) -> None:
+    chats = load_chats()
+    for c in chats:
+        if c["id"] == chat_id:
+            c["status"] = "submitted"
+            save_chats(chats)
+            return
 
 
 def load_history() -> list:
@@ -97,6 +146,11 @@ def get_categories() -> list:
         return []
 
 
+def wants_json() -> bool:
+    """チャット画面のfetch経由の呼び出しかどうか(ページ遷移ではなくjob_idをJSONで返す)。"""
+    return request.headers.get("X-Requested-With") == "fetch-chat"
+
+
 @app.route("/")
 def dashboard():
     history = load_history()
@@ -129,7 +183,25 @@ def dashboard():
 
 @app.route("/generate", methods=["GET"])
 def generate_form():
-    return render_template("generate.html", active="generate", categories=get_categories())
+    chats = [c for c in load_chats() if c.get("status") == "in_progress" and c.get("history")]
+    chats.sort(key=lambda c: c["updated_at"], reverse=True)
+    resumable_chats = []
+    for c in chats[:8]:
+        first_user = next((h["content"] for h in c["history"] if h["role"] == "user"), "")
+        resumable_chats.append({
+            "id": c["id"], "updated_at": c["updated_at"], "preview": first_user[:40],
+        })
+    return render_template(
+        "generate.html", active="generate", categories=get_categories(), resumable_chats=resumable_chats
+    )
+
+
+@app.route("/chats/<chat_id>")
+def get_chat_route(chat_id: str):
+    chat = get_chat(chat_id)
+    if chat is None:
+        abort(404)
+    return {"id": chat["id"], "history": chat["history"]}
 
 
 @app.route("/chat/message", methods=["POST"])
@@ -137,6 +209,7 @@ def chat_message():
     """チャット1ターン分を処理する(ジョブ化せず同期的に返す)。"""
     data = request.get_json(force=True)
     history = data.get("history", [])
+    chat_id = data.get("chat_id") or uuid.uuid4().hex
     if not history or history[-1].get("role") != "user":
         abort(400)
     try:
@@ -147,6 +220,11 @@ def chat_message():
         result = ga.chat_step(history, categories)
     except Exception as exc:
         return {"type": "error", "message": str(exc)}, 500
+
+    assistant_turn = {"role": "assistant", "content": json.dumps(result, ensure_ascii=False)}
+    upsert_chat(chat_id, history + [assistant_turn], status="in_progress")
+
+    result["chat_id"] = chat_id
     return result
 
 
@@ -156,6 +234,9 @@ def generate_titles_submit():
     category = request.form.get("category", "").strip()
     include_amazon = request.form.get("include_amazon") == "on"
     include_image = request.form.get("include_image") == "on"
+    chat_id = request.form.get("chat_id", "").strip()
+    if chat_id:
+        mark_chat_submitted(chat_id)
 
     def task(log):
         categories = ga.fetch_categories()
@@ -190,6 +271,8 @@ def generate_titles_submit():
         }
 
     job_id = start_job(task)
+    if wants_json():
+        return {"job_id": job_id}
     return redirect(url_for("titles_status", job_id=job_id))
 
 
@@ -231,6 +314,8 @@ def select_title():
         }
 
     job_id = start_job(task)
+    if wants_json():
+        return {"job_id": job_id}
     return redirect(url_for("outline_status", job_id=job_id))
 
 
@@ -240,6 +325,30 @@ def outline_status(job_id: str):
     if job is None:
         abort(404)
     return render_template("outline.html", active="generate", job_id=job_id, job=job)
+
+
+@app.route("/generate/revise-outline", methods=["POST"])
+def revise_outline_route():
+    """構成案(アウトライン)を自由記述のフィードバックに沿って部分修正する(チャット用、同期処理)。"""
+    data = request.get_json(force=True)
+    job_id = data.get("job_id", "")
+    feedback = data.get("feedback", "").strip()
+    job = get_job(job_id)
+    if job is None or job.get("status") != "done" or not feedback:
+        abort(400)
+
+    try:
+        categories = ga.fetch_categories()
+    except Exception:
+        categories = []
+    try:
+        revised = ga.revise_outline(job["result"]["outline"], feedback, categories)
+    except Exception as exc:
+        return {"error": str(exc)}, 500
+
+    with _jobs_lock:
+        job["result"]["outline"] = revised
+    return {"outline": revised}
 
 
 # --- ステップ3: アウトラインを承認 → 本文生成・WordPress下書き投稿 ----------
