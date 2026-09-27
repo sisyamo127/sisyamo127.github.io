@@ -112,6 +112,7 @@ def dashboard():
         for h in history
         if datetime.strptime(h["created_at"], "%Y-%m-%d %H:%M:%S") >= week_ago
     )
+    total_cost_usd = sum(h.get("usage", {}).get("cost_usd", 0) for h in history)
     return render_template(
         "dashboard.html",
         active="home",
@@ -120,6 +121,7 @@ def dashboard():
         success_count=success_count,
         error_count=error_count,
         this_week_cost_usd=this_week_cost_usd,
+        total_cost_usd=total_cost_usd,
     )
 
 
@@ -262,7 +264,11 @@ def approve_outline():
 
 @app.route("/history")
 def history_page():
-    return render_template("history.html", active="history", history=load_history())
+    history = load_history()
+    total_cost_usd = sum(h.get("usage", {}).get("cost_usd", 0) for h in history)
+    return render_template(
+        "history.html", active="history", history=history, total_cost_usd=total_cost_usd
+    )
 
 
 # --- リライト: 既存記事を選ぶ → リライト → プレビュー → 上書き保存 ---------
