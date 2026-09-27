@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sys
+import threading
 import urllib.parse
 from datetime import datetime
 
@@ -34,6 +35,40 @@ load_dotenv()
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-sonnet-5"
+
+# Claude Sonnet 5の料金(1トークンあたり、Anthropic公式レート)
+SONNET_5_INPUT_PRICE_PER_MTOK = 2.00
+SONNET_5_OUTPUT_PRICE_PER_MTOK = 10.00
+
+
+class _UsageTracker(threading.local):
+    """スレッドごとのAPI利用量を保持する(Webアプリで複数ジョブが並行しても混ざらないように)。"""
+
+    def __init__(self) -> None:
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+
+_usage = _UsageTracker()
+
+
+def reset_usage() -> None:
+    """使用量カウンターをリセットする。1回の記事生成ジョブの開始時に呼ぶ。"""
+    _usage.input_tokens = 0
+    _usage.output_tokens = 0
+
+
+def get_usage_summary() -> dict:
+    """これまでの(直近reset_usage()以降の)Claude API利用量と概算費用を返す。"""
+    cost_usd = (
+        _usage.input_tokens / 1_000_000 * SONNET_5_INPUT_PRICE_PER_MTOK
+        + _usage.output_tokens / 1_000_000 * SONNET_5_OUTPUT_PRICE_PER_MTOK
+    )
+    return {
+        "input_tokens": _usage.input_tokens,
+        "output_tokens": _usage.output_tokens,
+        "cost_usd": round(cost_usd, 4),
+    }
 
 # サイトに既存の「ゆう」アイコン画像(会話ブロックで使用)
 YU_AVATAR_URL = (
@@ -170,7 +205,13 @@ def _call_claude(messages: list) -> tuple[str, dict]:
         timeout=180,
     )
     response.raise_for_status()
-    content_blocks = response.json()["content"]
+    data = response.json()
+
+    usage = data.get("usage", {})
+    _usage.input_tokens += usage.get("input_tokens", 0)
+    _usage.output_tokens += usage.get("output_tokens", 0)
+
+    content_blocks = data["content"]
     text_block = next(
         (block for block in content_blocks if block.get("type") == "text"), None
     )
@@ -1020,7 +1061,13 @@ def run_pipeline_rewrite(
 
 def main() -> None:
     topic = sys.argv[1] if len(sys.argv) > 1 else None
+    reset_usage()
     run_pipeline(topic=topic)
+    usage = get_usage_summary()
+    print(
+        f"API利用量: 入力{usage['input_tokens']:,}トークン / "
+        f"出力{usage['output_tokens']:,}トークン / 概算費用 ${usage['cost_usd']:.4f}"
+    )
 
 
 if __name__ == "__main__":

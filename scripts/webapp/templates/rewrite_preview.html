@@ -38,6 +38,9 @@ function renderPreview(data) {
       <input type="hidden" name="job_id" value="${jobId}">
       <button type="submit" class="btn">この内容で上書きする(下書きに変更) &raquo;</button>
     </form>`;
+  if (data.usage) {
+    html += `<p style="color:#6b7280;font-size:0.78rem;margin-top:10px;">API利用量: 入力${data.usage.input_tokens.toLocaleString()}トークン / 出力${data.usage.output_tokens.toLocaleString()}トークン(概算費用 $${data.usage.cost_usd.toFixed(4)})</p>`;
+  }
   previewEl.innerHTML = html;
 }
 

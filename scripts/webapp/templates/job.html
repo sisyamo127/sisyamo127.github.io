@@ -35,6 +35,9 @@ async function poll() {
         <p style="margin:0 0 4px;"><strong>メタディスクリプション:</strong> ${r.meta_description || ""}</p>
         <p style="margin:0;"><strong>メタキーワード:</strong> ${(r.keywords || []).join(", ")}</p>
       </div>`;
+    if (r.usage) {
+      html += `<p style="color:#6b7280;font-size:0.78rem;margin-top:10px;">API利用量: 入力${r.usage.input_tokens.toLocaleString()}トークン / 出力${r.usage.output_tokens.toLocaleString()}トークン(概算費用 $${r.usage.cost_usd.toFixed(4)})</p>`;
+    }
     resultEl.innerHTML = html;
     return;
   }
