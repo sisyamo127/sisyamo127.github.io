@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}利用料 | おもちゃミュージアム{% endblock %}
+{% block heading %}API利用料{% endblock %}
+{% block content %}
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="label">累計API利用料(概算)</div>
+    <div class="value">${{ "%.4f"|format(total_cost_usd) }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">今月の利用料(概算)</div>
+    <div class="value">${{ "%.4f"|format(this_month_cost_usd) }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">今週の利用料(概算)</div>
+    <div class="value">${{ "%.4f"|format(this_week_cost_usd) }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">記事1本あたり平均</div>
+    <div class="value">${{ "%.4f"|format(avg_cost_usd) }}</div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+  <strong>使用中のモデルと料金</strong>
+  <p style="color:#6b7280;font-size:0.85rem;margin:8px 0 0;">
+    モデル: {{ current_model }}<br>
+    料金: 入力 ${{ "%.2f"|format(input_price_per_mtok) }} / 出力 ${{ "%.2f"|format(output_price_per_mtok) }}(100万トークンあたり)<br>
+    累計トークン数: 入力 {{ "{:,}".format(total_input_tokens) }} / 出力 {{ "{:,}".format(total_output_tokens) }}
+  </p>
+  <p style="color:#9ca3af;font-size:0.78rem;margin:10px 0 0;">
+    ※ Amazon商品検索・画像取得(Unsplash)・WordPressへの投稿自体には料金はかかりません。ここで計上しているのはClaude API(記事生成)の利用分のみで、実際の請求額と多少ずれる場合があります。{% if tracked_count < history|length %}また、利用料の記録機能を追加する前に生成した記事({{ history|length - tracked_count }}件)は集計に含まれていません。{% endif %}
+  </p>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+  <strong>月別の内訳</strong>
+  {% if monthly_breakdown %}
+  <table style="margin-top:10px;">
+    <tr><th>月</th><th>記事数</th><th>費用(概算)</th></tr>
+    {% for m in monthly_breakdown %}
+    <tr>
+      <td>{{ m.month }}</td>
+      <td>{{ m.count }}</td>
+      <td>${{ "%.4f"|format(m.cost_usd) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">まだ記録がありません。</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <strong>記事ごとの内訳</strong>
+  {% if history %}
+  <table style="margin-top:10px;">
+    <tr><th>日時</th><th>タイトル</th><th>入力トークン</th><th>出力トークン</th><th>費用(概算)</th></tr>
+    {% for item in history %}
+    <tr>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.title }}</td>
+      {% if item.usage %}
+      <td>{{ "{:,}".format(item.usage.input_tokens) }}</td>
+      <td>{{ "{:,}".format(item.usage.output_tokens) }}</td>
+      <td>${{ "%.4f"|format(item.usage.cost_usd) }}</td>
+      {% else %}
+      <td colspan="3" style="color:#9ca3af;">記録なし</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">まだ記事がありません。</div>
+  {% endif %}
+</div>
+
+{% endblock %}
