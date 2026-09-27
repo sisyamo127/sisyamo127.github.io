@@ -357,6 +357,60 @@ def rewrite_confirm():
     return redirect(url_for("job_status", job_id=job_id))
 
 
+# --- API利用料 --------------------------------------------------------------
+
+@app.route("/usage")
+def usage_page():
+    history = load_history()
+    now = datetime.now()
+    week_ago = now - timedelta(days=7)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    def cost_of(h: dict) -> float:
+        return h.get("usage", {}).get("cost_usd", 0)
+
+    def created_at(h: dict) -> datetime:
+        return datetime.strptime(h["created_at"], "%Y-%m-%d %H:%M:%S")
+
+    total_cost_usd = sum(cost_of(h) for h in history)
+    this_week_cost_usd = sum(cost_of(h) for h in history if created_at(h) >= week_ago)
+    this_month_cost_usd = sum(cost_of(h) for h in history if created_at(h) >= month_start)
+    total_input_tokens = sum(h.get("usage", {}).get("input_tokens", 0) for h in history)
+    total_output_tokens = sum(h.get("usage", {}).get("output_tokens", 0) for h in history)
+    tracked_count = sum(1 for h in history if h.get("usage"))
+    avg_cost_usd = (total_cost_usd / tracked_count) if tracked_count else 0
+
+    # 月別の内訳(新しい月が上に来る順)
+    monthly = {}
+    for h in history:
+        if not h.get("usage"):
+            continue
+        key = created_at(h).strftime("%Y-%m")
+        bucket = monthly.setdefault(key, {"month": key, "count": 0, "cost_usd": 0.0})
+        bucket["count"] += 1
+        bucket["cost_usd"] += cost_of(h)
+    monthly_breakdown = sorted(monthly.values(), key=lambda b: b["month"], reverse=True)
+
+    current_model = os.environ.get("ANTHROPIC_MODEL", ga.DEFAULT_MODEL)
+
+    return render_template(
+        "usage.html",
+        active="usage",
+        history=history,
+        total_cost_usd=total_cost_usd,
+        this_week_cost_usd=this_week_cost_usd,
+        this_month_cost_usd=this_month_cost_usd,
+        total_input_tokens=total_input_tokens,
+        total_output_tokens=total_output_tokens,
+        avg_cost_usd=avg_cost_usd,
+        tracked_count=tracked_count,
+        monthly_breakdown=monthly_breakdown,
+        current_model=current_model,
+        input_price_per_mtok=ga.SONNET_5_INPUT_PRICE_PER_MTOK,
+        output_price_per_mtok=ga.SONNET_5_OUTPUT_PRICE_PER_MTOK,
+    )
+
+
 @app.route("/status")
 def status_page():
     services = []
