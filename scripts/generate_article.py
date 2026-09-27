@@ -72,6 +72,25 @@ def get_usage_summary() -> dict:
         "cost_usd": round(cost_usd, 4),
     }
 
+
+def sum_usage(*usages: dict | None) -> dict:
+    """複数のusage(dict、Noneも可)のトークン数を合算し、概算費用を再計算して返す。
+
+    記事生成の各段階(チャット・タイトル案・構成案・本文生成)は別々に
+    get_usage_summary()するため、パイプライン全体の合計を出すのに使う。
+    """
+    input_tokens = sum((u or {}).get("input_tokens", 0) for u in usages)
+    output_tokens = sum((u or {}).get("output_tokens", 0) for u in usages)
+    cost_usd = (
+        input_tokens / 1_000_000 * SONNET_5_INPUT_PRICE_PER_MTOK
+        + output_tokens / 1_000_000 * SONNET_5_OUTPUT_PRICE_PER_MTOK
+    )
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_usd": round(cost_usd, 4),
+    }
+
 # サイトに既存の「ゆう」アイコン画像(会話ブロックで使用)
 YU_AVATAR_URL = (
     "https://www.omotya-museum.com/wp-content/uploads/2024/09/"
