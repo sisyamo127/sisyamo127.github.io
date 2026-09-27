@@ -7,7 +7,7 @@
   <input type="text" id="searchBox" placeholder="タイトル・カテゴリーで検索..." style="margin-bottom:16px;">
   {% if history %}
   <table id="historyTable">
-    <tr><th>日時</th><th>タイトル</th><th>カテゴリー</th><th>文字数</th><th>API費用</th><th>状態</th></tr>
+    <tr><th>日時</th><th>タイトル</th><th>カテゴリー</th><th>文字数</th><th>API費用</th><th>SEO情報</th><th>状態</th></tr>
     {% for item in history %}
     <tr>
       <td>{{ item.created_at }}</td>
@@ -15,6 +15,20 @@
       <td>{{ item.category }}</td>
       <td>{{ item.char_count }}</td>
       <td>{% if item.usage %}${{ "%.4f"|format(item.usage.cost_usd) }}{% else %}-{% endif %}</td>
+      <td>
+        {% if item.seo_title or item.meta_description or item.keywords %}
+        <details>
+          <summary style="cursor:pointer;color:#0066cc;">見る</summary>
+          <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-top:6px;font-size:0.8rem;min-width:260px;max-width:360px;">
+            <p style="margin:0 0 4px;"><strong>SEOタイトル:</strong> {{ item.seo_title or item.title }}</p>
+            <p style="margin:0 0 4px;"><strong>メタディスクリプション:</strong> {{ item.meta_description or "" }}</p>
+            <p style="margin:0;"><strong>メタキーワード:</strong> {{ (item.keywords or [])|join(", ") }}</p>
+          </div>
+        </details>
+        {% else %}
+        -
+        {% endif %}
+      </td>
       <td>
         {% if item.wp_link %}
         <a class="link" href="{{ item.wp_link }}" target="_blank">下書きを開く</a>
