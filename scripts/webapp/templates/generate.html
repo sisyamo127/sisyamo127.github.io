@@ -269,6 +269,21 @@ function renderOutline(outline) {
     html += `<li style="margin-bottom:6px;"><strong>${escapeHtml(o.heading)}</strong><br><span style="color:#6b7280;font-size:0.85rem;">${escapeHtml(o.summary)}</span></li>`;
   });
   html += "</ol></div>";
+  if ((outline.product_mentions || []).length) {
+    html += '<div style="margin-top:8px;font-size:0.85rem;"><strong>紹介する商品</strong>(記事作成時に楽天で実物を探し、その商品について書きます)<ul style="margin:4px 0 0 20px;padding:0;">';
+    outline.product_mentions.forEach(function (p) {
+      html += `<li>${escapeHtml(p.name)} <span style="color:#9ca3af;">(検索: ${escapeHtml(p.search_keyword)} / 見出し: ${escapeHtml(p.heading)})</span></li>`;
+    });
+    html += "</ul></div>";
+  }
+  if ((outline.places || []).length) {
+    html += '<div style="margin-top:8px;font-size:0.85rem;"><strong>地図・写真を載せる場所</strong><ul style="margin:4px 0 0 20px;padding:0;">';
+    outline.places.forEach(function (p) {
+      const extra = [p.floor_map_url ? "公式フロアマップあり" : "", p.official_url ? "公式サイトあり" : ""].filter(Boolean).join("・");
+      html += `<li>${escapeHtml(p.name)}${extra ? ` <span style="color:#9ca3af;">(${escapeHtml(extra)})</span>` : ""}</li>`;
+    });
+    html += "</ul></div>";
+  }
   addHtmlBubble(html);
 
   phase = "outline_review";

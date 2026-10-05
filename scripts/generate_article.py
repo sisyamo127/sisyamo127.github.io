@@ -247,7 +247,18 @@ def _call_claude(
         json=payload,
         timeout=180,
     )
-    response.raise_for_status()
+    if not response.ok:
+        # 「400 Bad Request」だけでは原因が分からないため、APIが返したエラー内容を表示する
+        try:
+            message = response.json().get("error", {}).get("message", response.text)
+        except ValueError:
+            message = response.text
+        if "credit balance" in message:
+            message = (
+                "Anthropic APIのクレジット残高が不足しています。"
+                "console.anthropic.com の Plans & Billing でクレジットを追加してください。"
+            )
+        raise RuntimeError(f"Claude APIエラー (HTTP {response.status_code}): {message[:300]}")
     data = response.json()
 
     usage = data.get("usage", {})
@@ -295,7 +306,8 @@ def _generate_with_expansion(messages: list, max_expand_attempts: int = 2, log=D
                 f"{MIN_CONTENT_CHARS}文字以上になるよう、既存の内容を薄めず、具体例・詳細な説明・"
                 "追加のセクション(h2/h3)を加えて拡張してください。"
                 "他のフィールド(title, meta_description等)も含め、同じJSON形式で全文を出力し直してください。"
-                "[[MID_CONVERSATION]]のプレースホルダーは1箇所のまま維持してください。"
+                "[[MID_CONVERSATION]]・[[PRODUCT:数字]]・[[PLACE:数字]]のプレースホルダーは、増やしたり消したりせずそのまま維持してください。"
+                "加筆する際も、紹介済みの商品以外に新しい具体的なブランド名・商品名は追加しないでください。"
             ),
         })
         raw_text, article = _call_claude(messages)
@@ -461,6 +473,8 @@ def research_topic(title: str, target_keyword: str, log=DEFAULT_LOG) -> str:
 Web検索を使って、この記事に関連する実在の情報(店舗名・場所、ブランドの産地/発祥地、
 具体的な商品名、価格帯、発売時期など)を調べてください。不確かな情報は含めないこと。
 分からなかった項目は無理に埋めず省略してください。
+記事に駅・空港・商業施設・店舗が出てくる場合は、その公式サイトのフロアマップ(構内図・館内マップ)の
+ページや店舗案内ページのURLも、実際に見つかったものだけ記載してください(推測でURLを作らないこと)。
 
 必ず次のJSON形式のみで返してください。他の文章は含めないこと。
 
@@ -473,6 +487,36 @@ Web検索を使って、この記事に関連する実在の情報(店舗名・�
     else:
         log("事前調査: 特筆すべき情報は見つかりませんでした。")
     return facts
+
+
+# 構成案(新規作成・リライト共通)で、紹介する商品と場所を計画させる指示とJSONの形。
+# 商品は本文を書く前に楽天で実物を確定させ、本文ではその商品だけを具体名で紹介する。
+PRODUCT_AND_PLACE_PLAN_INSTRUCTIONS = """## 記事内で紹介する商品(最大6個)
+本文で具体的な商品を紹介する箇所をすべて洗い出し、product_mentionsに挙げてください(最大6個、同じ商品の重複なし)。
+ここに挙げた商品は、本文を書く前に楽天市場で実在の商品に置き換え、その商品を本文で紹介します。
+本文で具体的な商品名を出すのはここに挙げた商品だけになるので、紹介したい商品は漏れなく挙げてください。
+- heading: 紹介する箇所の見出し(outlineのheadingと同じ文字列にすること)
+- name: 紹介する商品の種類(例:「木製の型はめパズル」「お風呂で遊べる水鉄砲」)
+- search_keyword: 楽天市場で検索するための具体的なキーワード(日本語、2〜4語。ブランド名・商品名が決まっていればそれを含める)
+
+## 記事内で紹介する場所(0〜3個)
+駅・空港・商業施設・店舗など、読者が実際に行く場所を紹介する記事なら、その場所をplacesに挙げてください
+(該当しなければ空配列)。紹介箇所に地図と写真を載せます。
+- heading: 紹介する箇所の見出し(outlineのheadingと同じ文字列)
+- name: 表示名(例:「JR札幌駅 西改札」「羽田空港 第1ターミナル」)
+- kind: "station" / "airport" / "store" / "other" のいずれか
+- map_query: Googleマップで検索してその場所が出る文字列(例:「JR札幌駅」「羽田空港 第1ターミナル」「キデイランド 原宿店」)
+- photo_query_en: 写真検索用の英語の施設名(例:「Sapporo Station」「Haneda Airport Terminal 1」)。店舗単体など写真が不要なら空文字列
+- floor_map_url: 事前調査で実際に確認できた公式フロアマップ・構内図ページのURL。なければ空文字列(推測で作らないこと)
+- official_url: 事前調査で実際に確認できた公式サイト・店舗案内ページのURL。なければ空文字列(推測で作らないこと)"""
+
+PRODUCT_AND_PLACE_JSON_FIELDS = """  "product_mentions": [
+    {"heading": "見出し", "name": "商品の種類", "search_keyword": "楽天検索キーワード"}
+  ],
+  "places": [
+    {"heading": "見出し", "name": "場所の表示名", "kind": "station", "map_query": "Googleマップ検索文字列",
+     "photo_query_en": "English facility name", "floor_map_url": "", "official_url": ""}
+  ]"""
 
 
 def generate_outline(
@@ -525,12 +569,7 @@ SEOで狙うキーワード:「{target_keyword}」
 事前調査でわかった事実があれば、それを優先して使ってください。ブランドの産地・店舗の場所など
 検証可能な事実については、事前調査にない内容を憶測で作らないこと。
 
-## 記事内で紹介する商品(2〜3個)
-アウトラインの中から、具体的な商品を紹介するのにふさわしい見出しを2〜3個選び、
-それぞれで紹介する商品(product_mentions)を考えてください。
-- heading: 紹介する箇所の見出し(上のoutlineのheadingと同じ文字列にすること)
-- name: 紹介する商品の名前・種類(例:「木製の型はめパズル」)
-- search_keyword: その商品をAmazonで検索するための具体的なキーワード(日本語)
+{PRODUCT_AND_PLACE_PLAN_INSTRUCTIONS}
 
 必ず次のJSON形式のみで返してください。他の文章は含めないこと。
 
@@ -550,9 +589,7 @@ SEOで狙うキーワード:「{target_keyword}」
   "outline": [
     {{"heading": "見出し1", "summary": "このセクションで書く内容の概要"}}
   ],
-  "product_mentions": [
-    {{"heading": "見出し1", "name": "商品名・種類", "search_keyword": "Amazon検索キーワード"}}
-  ]
+{PRODUCT_AND_PLACE_JSON_FIELDS}
 }}
 """
     _, data = _call_claude([{"role": "user", "content": prompt}])
@@ -576,37 +613,78 @@ def revise_outline(outline: dict, feedback: str, categories: list, log=DEFAULT_L
 ## 制約
 - categoryは次のいずれかから選ぶこと(新しいカテゴリー名を作らないこと): {category_names}
 - outlineの見出し数は5〜7個を維持すること
-- product_mentionsのheadingは、修正後のoutlineのheadingと一致させること
+- product_mentions(最大6個)とplacesのheadingは、修正後のoutlineのheadingと一致させること
+- placesのfloor_map_url・official_urlは、元の構成案にあるもの以外を推測で追加しないこと
 
 修正後の構成案全体を、元と同じJSON形式(title, seo_title, meta_description, keywords, category,
 reader_persona, reader_question, yu_answer, mid_question, mid_answer, closing_comment,
-amazon_search_keyword, outline, product_mentions)で、必ずJSONのみ返してください。
+amazon_search_keyword, outline, product_mentions, places)で、必ずJSONのみ返してください。
 """
     _, data = _call_claude([{"role": "user", "content": prompt}])
     log("構成案を修正しました。")
     return data
 
 
-def build_content_prompt_from_outline(outline: dict) -> str:
+def build_content_prompt_from_outline(outline: dict, reference_text: str | None = None) -> str:
     outline_lines = "\n".join(
         f"- {o['heading']}: {o['summary']}" for o in outline.get("outline", [])
     )
     keywords = "、".join(outline.get("keywords", []))
+
     product_mentions = outline.get("product_mentions", [])
     if product_mentions:
-        product_lines = "\n".join(
-            f'- 見出し「{p["heading"]}」の中で「{p["name"]}」に触れたすぐ後に '
-            f'`[[PRODUCT:{i}]]` というプレースホルダーを1つ挿入すること'
-            for i, p in enumerate(product_mentions)
-        )
+        product_blocks = []
+        for i, p in enumerate(product_mentions):
+            item = p.get("item")
+            if item:
+                price = f"{item['price']:,}円(税込)" if item.get("price") else "不明"
+                product_blocks.append(
+                    f"[[PRODUCT:{i}]] 見出し「{p['heading']}」で紹介する実在の商品\n"
+                    f"  販売ページの商品名: {item.get('full_name', item['name'])}\n"
+                    f"  価格: {price} / ショップ: {item.get('shop', '')} / レビュー: {item.get('review_count', 0)}件\n"
+                    f"  商品説明(抜粋): {item.get('caption') or 'なし'}"
+                )
+            else:
+                product_blocks.append(
+                    f"[[PRODUCT:{i}]] 見出し「{p['heading']}」で紹介する商品の種類: {p['name']}"
+                    "(特定の商品は見つからなかったので、具体的な商品名は出さず種類として紹介する)"
+                )
         product_instruction = f"""
-## 商品紹介プレースホルダー(重要)
-以下の商品について本文中で触れ、触れた直後にプレースホルダーを挿入してください(このプレースホルダーは
-後で商品カードのHTMLに置き換えるので、他の文章とは改行で区切ること):
-{product_lines}
+## 紹介する商品と商品カードのプレースホルダー(重要)
+以下の商品を本文で紹介し、それぞれ本文で最初に触れた直後にプレースホルダー(例: [[PRODUCT:0]])を1回だけ挿入してください。
+プレースホルダーは後で画像付きの商品カードに置き換えるので、他の文章とは改行で区切ること。
+- 販売ページの商品名は検索用のキーワードが並んでいるので、そのまま書かず、読者に分かる自然な呼び方にすること
+  (例:「はぐラブの木製ペグパズル」「恐竜や乗り物の型はめパズル2点セット」。ブランド名・ショップ名があれば添える)
+- 特徴・仕様は販売ページの商品名と商品説明に書かれている範囲で書くこと(書かれていない機能・素材・対象年齢などを作らない)
+- 価格は「◯円前後」程度にとどめること(変動するため)
+- ここに挙げた商品以外に、具体的なブランド名・商品名を出さないこと(一般的な種類の話はしてよい)
+
+{chr(10).join(product_blocks)}
 """
     else:
         product_instruction = ""
+
+    places = outline.get("places", [])
+    if places:
+        place_lines = "\n".join(
+            f'- [[PLACE:{i}]] 見出し「{p["heading"]}」で紹介する場所: {p["name"]}'
+            for i, p in enumerate(places)
+        )
+        place_instruction = f"""
+## 場所の地図・写真のプレースホルダー
+以下の場所について本文で触れた直後(その場所の行き方・場所の説明のあたり)に、プレースホルダーを1回だけ挿入してください。
+後で地図と写真に置き換えるので、他の文章とは改行で区切ること。
+{place_lines}
+"""
+    else:
+        place_instruction = ""
+
+    reference_section = ""
+    if reference_text:
+        reference_section = f"""
+## 元記事(リライト元。トピック・店舗名・地名などの事実はできるだけ尊重し、古そうな情報は無難な表現に直すこと)
+{reference_text[:6000]}
+"""
 
     return f"""あなたは「おもちゃミュージアム」というブログの専属ライターです。
 以下の承認済み構成案に沿って、記事本文を執筆してください。構成案の見出し・流れは変更しないこと。
@@ -614,10 +692,10 @@ def build_content_prompt_from_outline(outline: dict) -> str:
 タイトル:「{outline.get('title', '')}」
 メタディスクリプション: {outline.get('meta_description', '')}
 SEOキーワード: {keywords}
-
+{reference_section}
 ## 構成案(この通りの見出し・順序で書くこと)
 {outline_lines}
-{product_instruction}
+{product_instruction}{place_instruction}
 
 ## 文体・トーン
 - 「です・ます調」で、丁寧で優しい雰囲気にする
@@ -648,9 +726,23 @@ SEOキーワード: {keywords}
 """
 
 
-def generate_article_from_outline(outline: dict, max_expand_attempts: int = 2, log=DEFAULT_LOG) -> dict:
-    """承認済みのアウトラインに沿って本文を生成し、タイトル等の固定フィールドと結合する。"""
-    messages = [{"role": "user", "content": build_content_prompt_from_outline(outline)}]
+def generate_article_from_outline(
+    outline: dict,
+    max_expand_attempts: int = 2,
+    log=DEFAULT_LOG,
+    reference_text: str | None = None,
+) -> dict:
+    """承認済みのアウトラインに沿って本文を生成し、タイトル等の固定フィールドと結合する。
+
+    本文を書く前に、紹介予定の商品を楽天で実在の商品に確定させ、その商品情報をもとに書かせる。
+    """
+    outline = dict(outline)
+    mentions = outline.get("product_mentions") or []
+    if mentions and not any("item" in m for m in mentions):
+        log(f"紹介する商品({len(mentions[:MAX_PRODUCT_MENTIONS])}件)を楽天市場で探しています...")
+        outline["product_mentions"] = resolve_product_mentions(mentions, log=log)
+
+    messages = [{"role": "user", "content": build_content_prompt_from_outline(outline, reference_text)}]
     result = _generate_with_expansion(messages, max_expand_attempts, log)
 
     article = dict(outline)
@@ -663,6 +755,7 @@ def generate_article_from_outline(outline: dict, max_expand_attempts: int = 2, l
 # ---------------------------------------------------------------------------
 
 def build_rewrite_prompt(existing_title: str, existing_text: str, categories: list, category: str | None = None) -> str:
+    """リライトの構成案(新規作成の構成案と同じ形式)を作らせるプロンプト。本文は別ステップで書く。"""
     category_names = "、".join(c["name"] for c in categories if c["name"] != "Uncategorized")
     if category:
         category_instruction = f'"category"には必ず次の値をそのまま使うこと:「{category}」'
@@ -673,8 +766,9 @@ def build_rewrite_prompt(existing_title: str, existing_text: str, categories: li
         )
     excerpt = existing_text[:6000]
 
-    return f"""あなたは「おもちゃミュージアム」というブログの専属ライターです。
-以下は現在サイトに掲載されている記事です。この記事を、最新のハウススタイルに沿ってリライトしてください。
+    return f"""あなたは「おもちゃミュージアム」というブログの編集者です。
+以下は現在サイトに掲載されている記事です。この記事を最新のハウススタイルでリライトするための構成案を作ってください。
+本文はこの後、別の工程で構成案に沿って書きます。
 
 ## 元記事
 タイトル:「{existing_title}」
@@ -683,7 +777,7 @@ def build_rewrite_prompt(existing_title: str, existing_text: str, categories: li
 
 ## リライトの方針
 - 元記事のトピック・具体的な事実(店舗名、商品名、地名等)はできるだけ尊重すること
-- 情報が古くなっていそうな部分(価格、流行、時期の記述等)は一般的で無難な表現に書き換えるか、最新の情報として自然に書き直すこと
+- 情報が古くなっていそうな部分(価格、流行、時期の記述等)は一般的で無難な表現にする前提で構成すること
 - 単なる言い換えではなく、より詳しく・具体的に加筆し、SEOとしても改善すること
 - タイトルは元のままでもよいが、より検索されやすいタイトルがあれば改善してよい(【】から始まる形式を維持)
 
@@ -697,25 +791,11 @@ def build_rewrite_prompt(existing_title: str, existing_text: str, categories: li
 ## カテゴリー
 {category_instruction}
 
-## 商品紹介(2〜3個)
-記事に合う具体的な商品を2〜3個選び、product_mentionsとして挙げてください。
-- heading: 紹介する箇所の見出し(outlineのheadingと同じ文字列)
-- name: 商品の名前・種類
-- search_keyword: Amazonで検索するための具体的なキーワード
+## アウトライン
+5〜7個の見出し(h2)と、それぞれ何を書くかの概要(1〜2文)。全体で本文5000文字以上になるボリューム感にすること。
 
-## 文字数・構成(重要)
-- 本文(content)は**必ず5000文字以上**にすること
-- h2見出しを5〜7個用意し、それぞれ400〜600文字程度で執筆すること
-- <h2>から始めること(タイトルや会話パートは含めない)
-- 本文中盤の良い位置に `[[MID_CONVERSATION]]` を1箇所、商品に触れた直後に `[[PRODUCT:0]]` 等のプレースホルダーを挿入すること
-
-## 装飾(デザイン)
-本文のHTML内で、以下のような装飾を適宜使ってください(インラインstyleで指定すること):
-- 重要な語句は <strong> で太字にする
-- 特に注目してほしい語句は <span class="marker-under">のように囲む
-- 「ポイント」「まとめ」などは背景色付きのボックスにする。例:
-  <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:16px;margin:16px 0;border-radius:4px;"><strong>ポイント</strong><br>ここに内容</div>
-- 比較や一覧が適切な場面ではtable要素も使ってよい
+{PRODUCT_AND_PLACE_PLAN_INSTRUCTIONS}
+(元記事に出てくる公式サイト等のURLがあれば、floor_map_url・official_urlに使ってよい)
 
 ## 出力形式
 必ず次のJSON形式のみで返してください。他の文章やコードブロックの記号は含めないこと。
@@ -732,11 +812,11 @@ def build_rewrite_prompt(existing_title: str, existing_text: str, categories: li
   "mid_question": "中盤の読者の追加の疑問",
   "mid_answer": "中盤のゆうの返答",
   "closing_comment": "最後のゆうのまとめ・応援コメント",
-  "amazon_search_keyword": "記事全体を総括するおすすめ商品のAmazon検索キーワード",
-  "product_mentions": [
-    {{"heading": "見出し", "name": "商品名・種類", "search_keyword": "Amazon検索キーワード"}}
+  "amazon_search_keyword": "記事全体を総括するおすすめ商品の検索キーワード",
+  "outline": [
+    {{"heading": "見出し1", "summary": "このセクションで書く内容の概要"}}
   ],
-  "content": "h2から始まる本文HTML(5000文字以上、[[MID_CONVERSATION]]と[[PRODUCT:n]]を含む)"
+{PRODUCT_AND_PLACE_JSON_FIELDS}
 }}
 """
 
@@ -749,11 +829,17 @@ def generate_rewrite(
     max_expand_attempts: int = 2,
     log=DEFAULT_LOG,
 ) -> dict:
-    """既存記事を参考に、ハウススタイルへリライトした記事を生成する。"""
-    messages = [
-        {"role": "user", "content": build_rewrite_prompt(existing_title, existing_text, categories, category)}
-    ]
-    return _generate_with_expansion(messages, max_expand_attempts, log)
+    """既存記事を参考に、ハウススタイルへリライトした記事を生成する。
+
+    新規作成と同じく「構成案(紹介する商品・場所を含む)→ 楽天で実商品を確定 → 本文執筆」の順で進める。
+    """
+    _, plan = _call_claude(
+        [{"role": "user", "content": build_rewrite_prompt(existing_title, existing_text, categories, category)}]
+    )
+    log(f"リライトの構成案を作成しました(見出し{len(plan.get('outline', []))}個)")
+    return generate_article_from_outline(
+        plan, max_expand_attempts=max_expand_attempts, log=log, reference_text=existing_text
+    )
 
 
 def build_conversation_balloon_html(persona: str, question: str, answer: str) -> str:
@@ -918,6 +1004,8 @@ def search_rakuten_items(keyword: str, hits: int = 3) -> list:
             "shop": it.get("shopName", ""),
             "review_average": it.get("reviewAverage") or 0,
             "review_count": it.get("reviewCount") or 0,
+            "full_name": it.get("itemName", ""),
+            "caption": re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", it.get("itemCaption") or "")).strip()[:300],
         })
     # 関連度の高い上位5件の中でだけレビューありを優先する(下位の人気商品が割り込まないように)
     head, tail = items[:5], items[5:]
@@ -1020,6 +1108,176 @@ def build_inline_product_card_html(name: str, search_keyword: str, log=DEFAULT_L
 <a rel="nofollow noopener sponsored" href="{search_url}" target="_blank" style="display:inline-block;background:#ff6600;color:#fff;font-weight:700;padding:6px 16px;border-radius:6px;text-decoration:none;font-size:0.85rem;">▶ Amazonで「{name}」を探す</a>
 </div>
 </div>"""
+
+
+MAX_PRODUCT_MENTIONS = 6
+
+
+def resolve_product_mentions(mentions: list, log=DEFAULT_LOG) -> list:
+    """構成案で予定した商品(種類・検索キーワード)を、楽天で実在の商品に置き換える。
+
+    本文を書く前に実商品を確定させ、その商品情報をもとに本文を書かせることで、
+    本文の説明と商品カードの中身がずれないようにする。同じ商品が重複しないようにし、
+    見つからなかった枠はitem=Noneのまま残す(本文では一般的な種類として扱う)。
+    """
+    resolved = []
+    used_urls = set()
+    for mention in (mentions or [])[:MAX_PRODUCT_MENTIONS]:
+        mention = dict(mention)
+        mention["item"] = None
+        if rakuten_configured() and mention.get("search_keyword"):
+            try:
+                for item in search_rakuten_items(mention["search_keyword"], hits=3):
+                    if item["url"] not in used_urls:
+                        mention["item"] = item
+                        used_urls.add(item["url"])
+                        break
+            except Exception as exc:
+                log(f"商品「{mention.get('name', '')}」の楽天検索に失敗しました: {exc}")
+        if mention["item"]:
+            log(f"紹介する商品を確定: {mention.get('name', '')} → {mention['item']['name']}")
+        else:
+            log(f"商品「{mention.get('name', '')}」は楽天で見つからなかったため、種類の紹介にとどめます")
+        resolved.append(mention)
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# 場所(駅・空港・店舗など)の紹介ブロック: Googleマップ埋め込み + 写真(Wikimedia Commons) + 公式案内へのリンク
+# ---------------------------------------------------------------------------
+# 公式サイトのフロアマップや店舗写真は各社の著作物のため転載せず、公式ページへのリンクにとどめる。
+# 写真はWikimedia Commonsの自由ライセンス画像のみ使い、撮影者・ライセンスを表記する。
+
+WIKIMEDIA_UA = {"User-Agent": "omotya-museum-article-tool/1.0 (https://www.omotya-museum.com)"}
+
+
+def _url_is_alive(url: str) -> bool:
+    """URLが実在するか(AIが作った架空のURLでないか)を確かめる。
+
+    存在しないドメイン・404などは不可。自動アクセスだけを拒否するサイト(403/429等)は実在するとみなす。
+    """
+    if not url.startswith(("http://", "https://")):
+        return False
+    try:
+        r = requests.get(url, headers={"User-Agent": BROWSER_USER_AGENT}, timeout=15, allow_redirects=True)
+        return r.status_code < 400 or r.status_code in (401, 403, 405, 429)
+    except Exception:
+        return False
+
+
+def fetch_commons_photo(query: str, place_name: str, log=DEFAULT_LOG) -> dict | None:
+    """Wikimedia Commonsから場所の写真を探し、軽量モデルに最も適した1枚を選ばせる。"""
+    r = requests.get(
+        "https://commons.wikimedia.org/w/api.php",
+        params={
+            "action": "query", "format": "json", "generator": "search",
+            "gsrsearch": f"{query} filetype:bitmap", "gsrnamespace": 6, "gsrlimit": 8,
+            "prop": "imageinfo", "iiprop": "url|extmetadata|mime", "iiurlwidth": 800,
+        },
+        headers=WIKIMEDIA_UA,
+        timeout=30,
+    )
+    r.raise_for_status()
+    pages = sorted((r.json().get("query") or {}).get("pages", {}).values(), key=lambda p: p.get("index", 99))
+
+    candidates = []
+    for p in pages:
+        info = (p.get("imageinfo") or [{}])[0]
+        meta = info.get("extmetadata") or {}
+        license_name = (meta.get("LicenseShortName") or {}).get("value", "")
+        if not license_name or "fair use" in license_name.lower() or not info.get("thumburl"):
+            continue
+        strip = lambda v: re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", v or "")).strip()  # noqa: E731
+        candidates.append({
+            "title": p["title"],
+            "description": strip((meta.get("ImageDescription") or {}).get("value"))[:150],
+            "date": strip((meta.get("DateTimeOriginal") or {}).get("value"))[:20],
+            "url": info["thumburl"],
+            "page_url": info.get("descriptionurl", ""),
+            "artist": strip((meta.get("Artist") or {}).get("value"))[:60] or "不明",
+            "license": license_name,
+            "license_url": (meta.get("LicenseUrl") or {}).get("value", ""),
+        })
+    if not candidates:
+        return None
+
+    listing = "\n".join(
+        f"{i}: {c['title']} / {c['description']} / 撮影日: {c['date'] or '不明'}" for i, c in enumerate(candidates)
+    )
+    try:
+        _, data = _call_claude(
+            [{"role": "user", "content": (
+                f"ブログ記事で「{place_name}」を紹介する箇所に載せる写真を選びます。"
+                "現在の施設の様子(外観・構内・ターミナルなど)が分かる写真を1枚選んでください。"
+                "古い時代の写真、食べ物や無関係な物のアップ、別の場所の写真は選ばないこと。\n"
+                f"{listing}\n"
+                '適切なものがなければ-1。{"index": 番号} のJSONだけを返してください。'
+            )}],
+            max_tokens=100,
+            model=LIGHT_MODEL,
+        )
+        index = int(data.get("index", -1))
+    except Exception as exc:
+        log(f"写真の選定に失敗しました(先頭の候補を使います): {exc}")
+        index = 0
+    if index < 0 or index >= len(candidates):
+        return None
+    return candidates[index]
+
+
+def build_place_block_html(place: dict, log=DEFAULT_LOG) -> str:
+    """場所1つぶんの紹介ブロック(写真・地図・公式ページへのリンク)を組み立てる。"""
+    name = place.get("name", "")
+    parts = []
+
+    photo = None
+    if place.get("photo_query_en"):
+        try:
+            photo = fetch_commons_photo(place["photo_query_en"], name, log=log)
+        except Exception as exc:
+            log(f"「{name}」の写真検索に失敗しました: {exc}")
+    if photo:
+        license_html = (
+            f'<a href="{html.escape(photo["license_url"])}" rel="noopener" target="_blank">{html.escape(photo["license"])}</a>'
+            if photo["license_url"] else html.escape(photo["license"])
+        )
+        parts.append(
+            f'<figure style="margin:0 0 12px;"><img src="{html.escape(photo["url"])}" alt="{html.escape(name)}" '
+            'style="width:100%;height:auto;border-radius:8px;" loading="lazy">'
+            f'<figcaption style="font-size:0.72rem;color:#888;margin-top:4px;">写真: {html.escape(photo["artist"])} / '
+            f'{license_html} / <a href="{html.escape(photo["page_url"])}" rel="noopener" target="_blank">Wikimedia Commons</a></figcaption></figure>'
+        )
+        log(f"「{name}」の写真を掲載します(Wikimedia Commons: {photo['title']})")
+
+    map_query = place.get("map_query") or name
+    if map_query:
+        zoom = 18 if place.get("kind") in ("station", "airport") else 17
+        map_src = f"https://maps.google.com/maps?q={urllib.parse.quote(map_query)}&z={zoom}&output=embed"
+        parts.append(
+            f'<iframe src="{html.escape(map_src)}" width="100%" height="320" style="border:0;border-radius:8px;" '
+            f'loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="{html.escape(name)}の地図"></iframe>'
+        )
+
+    links = []
+    for label, key in (("公式フロアマップ・構内図を見る", "floor_map_url"), ("公式サイトを見る", "official_url")):
+        url = (place.get(key) or "").strip()
+        if url and url not in [u for _, u in links] and _url_is_alive(url):
+            links.append((label, url))
+        elif url:
+            log(f"「{name}」の{label}のURLにアクセスできなかったため掲載しません: {url}")
+    if links:
+        parts.append("".join(
+            f'<a href="{html.escape(url)}" rel="noopener" target="_blank" style="display:inline-block;background:#2563eb;color:#fff;'
+            f'font-weight:700;padding:6px 16px;border-radius:6px;text-decoration:none;font-size:0.85rem;margin:8px 8px 0 0;">▶ {label}</a>'
+            for label, url in links
+        ))
+
+    if not parts:
+        return ""
+    return (
+        '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px;margin:16px 0;background:#fafafa;">'
+        f'<p style="font-weight:bold;margin:0 0 10px;">📍 {html.escape(name)}</p>{"".join(parts)}</div>'
+    )
 
 
 def resolve_category_id(category_name: str, categories: list) -> int | None:
@@ -1565,7 +1823,7 @@ def fix_article_with_feedback(content: str, issues: list, log=DEFAULT_LOG) -> st
     )
     prompt = f"""以下はおもちゃブログの記事本文(HTML)です。事実確認により、以下の指摘がありました。
 指摘された箇所のみを、修正の方向性に沿って書き換えてください。それ以外の文章・HTML構造・
-装飾(ふきだし・マーカー等)・プレースホルダー([[MID_CONVERSATION]]や[[PRODUCT:数字]]など)は
+装飾(ふきだし・マーカー等)・プレースホルダー([[MID_CONVERSATION]]・[[PRODUCT:数字]]・[[PLACE:数字]])は
 変更せずそのまま維持してください。
 
 ## 指摘事項
@@ -1610,24 +1868,64 @@ def finalize_and_publish(
     closing_html = build_yu_comment_html(article.get("closing_comment", ""))
 
     body = article["content"]
+
+    # 事実確認・修正は、商品カードや地図を入れる前の本文(プレースホルダー入り)に対して行う。
+    # カード・地図・ふきだしのHTMLまでAIに書き直させると崩れることがあるため。
+    issues = []
+    fact_check_fixed = False
+    log("① 内容確認: 事実確認(Web検索)を行っています...")
+    try:
+        issues = fact_check_article(body, log=log)
+    except Exception as exc:
+        log(f"事実確認に失敗しました(スキップします): {exc}")
+    if issues:
+        for i, issue in enumerate(issues, 1):
+            log(f"  指摘{i}: 「{issue.get('claim', '')}」→ {issue.get('issue', '')}")
+        log("② 修正: 指摘を反映して記事を修正しています...")
+        try:
+            body = fix_article_with_feedback(body, issues, log=log)
+            fact_check_fixed = True
+        except Exception as exc:
+            log(f"修正の反映に失敗しました(未修正のまま保存します): {exc}")
+
     if "[[MID_CONVERSATION]]" in body:
-        body = body.replace("[[MID_CONVERSATION]]", mid_html)
+        body = body.replace("[[MID_CONVERSATION]]", mid_html, 1).replace("[[MID_CONVERSATION]]", "")
     else:
         # モデルがプレースホルダーを出力しなかった場合は本文中央付近に挿入する
         midpoint = len(body) // 2
         insert_at = body.find("<h2", midpoint) if body.find("<h2", midpoint) != -1 else midpoint
         body = body[:insert_at] + mid_html + body[insert_at:]
 
+    used_item_urls = set()
     if include_amazon:
         for i, mention in enumerate(article.get("product_mentions", [])):
             placeholder = f"[[PRODUCT:{i}]]"
-            if placeholder in body:
+            if placeholder not in body:
+                continue
+            item = mention.get("item")
+            if item:
+                # 本文はこの実商品の情報をもとに書かれているので、カードも必ず同じ商品にする
+                card_html = build_rakuten_card_html(item, amazon_keyword=mention.get("search_keyword"))
+                used_item_urls.add(item["url"])
+            else:
                 card_html = build_inline_product_card_html(
                     mention.get("name", ""), mention.get("search_keyword", ""), log=log
                 )
-                body = body.replace(placeholder, card_html)
+            body = body.replace(placeholder, card_html, 1).replace(placeholder, "")
     # 残ったプレースホルダー(件数不一致等)は表示に影響しないよう除去する
     body = re.sub(r"\[\[PRODUCT:\d+\]\]", "", body)
+
+    for i, place in enumerate(article.get("places") or []):
+        placeholder = f"[[PLACE:{i}]]"
+        if placeholder not in body:
+            continue
+        try:
+            block = build_place_block_html(place, log=log)
+        except Exception as exc:
+            log(f"「{place.get('name', '')}」の地図・写真の作成に失敗しました: {exc}")
+            block = ""
+        body = body.replace(placeholder, block, 1).replace(placeholder, "")
+    body = re.sub(r"\[\[PLACE:\d+\]\]", "", body)
 
     product_html = ""
     amazon_keyword = article.get("amazon_search_keyword")
@@ -1639,7 +1937,11 @@ def finalize_and_publish(
             log(f"Amazon商品検索に失敗しました(楽天にフォールバックします): {exc}")
         if not product_html and rakuten_configured():
             try:
-                items = search_rakuten_items(amazon_keyword, hits=3)
+                # 本文中ですでに紹介した商品は「おすすめ商品」に重複して出さない
+                items = [
+                    item for item in search_rakuten_items(amazon_keyword, hits=8)
+                    if item["url"] not in used_item_urls
+                ][:3]
                 product_html = "\n".join(
                     build_rakuten_card_html(item, amazon_keyword=amazon_keyword) for item in items
                 )
@@ -1664,31 +1966,10 @@ def finalize_and_publish(
         "wp_link": None,
         "post_id": None,
         "content": full_content,
-        "fact_check_issues": [],
-        "fact_check_fixed": False,
+        "fact_check_issues": issues,
+        "fact_check_fixed": fact_check_fixed,
         "error": None,
     }
-
-    log("① 内容確認: 事実確認(Web検索)を行っています...")
-    try:
-        issues = fact_check_article(full_content, log=log)
-    except Exception as exc:
-        log(f"事実確認に失敗しました(スキップします): {exc}")
-        issues = []
-    result["fact_check_issues"] = issues
-
-    if issues:
-        for i, issue in enumerate(issues, 1):
-            log(f"  指摘{i}: 「{issue.get('claim', '')}」→ {issue.get('issue', '')}")
-
-        log("② 修正: 指摘を反映して記事を修正しています...")
-        try:
-            full_content = fix_article_with_feedback(full_content, issues, log=log)
-            result["fact_check_fixed"] = True
-        except Exception as exc:
-            log(f"修正の反映に失敗しました(未修正のまま保存します): {exc}")
-
-    result["char_count"] = _content_char_count(full_content)
 
     try:
         category_id = resolve_category_id(article.get("category", ""), categories)
