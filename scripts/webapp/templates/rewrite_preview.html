@@ -26,7 +26,8 @@ function renderPreview(data) {
   const a = data.article;
   let previewBody = (a.content || "")
     .replace(/\[\[MID_CONVERSATION\]\]/g, '<div style="color:#999;font-size:0.8rem;">(会話ブロックがここに入ります)</div>')
-    .replace(/\[\[PRODUCT:\d+\]\]/g, '<div style="color:#999;font-size:0.8rem;">(商品カードがここに入ります)</div>');
+    .replace(/\[\[PRODUCT:\d+\]\]/g, '<div style="color:#999;font-size:0.8rem;">(商品カードがここに入ります)</div>')
+    .replace(/\[\[PLACE:\d+\]\]/g, '<div style="color:#999;font-size:0.8rem;">(地図・写真がここに入ります)</div>');
 
   let html = `<p style="color:#6b7280;font-size:0.85rem;">元タイトル: ${escapeHtml(data.original_title)}</p>`;
   html += `<h3 style="margin:4px 0;">${escapeHtml(a.title)}</h3>`;
