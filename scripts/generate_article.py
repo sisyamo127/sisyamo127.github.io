@@ -14,6 +14,9 @@ Cocoonテーマのふきだし/マーカー、Amazon購入ボタン)に合わせ
   ANTHROPIC_MODEL       (任意) 使用するモデルID。省略時は claude-sonnet-5
   UNSPLASH_ACCESS_KEY   (任意) アイキャッチ画像の自動取得に使用
   OPENAI_API_KEY        (任意) 画像生成機能(generate_image_with_openai)に使用
+  RAKUTEN_APP_ID        (任意) 楽天市場商品検索APIのアプリケーションID(商品画像・リンクに使用)
+  RAKUTEN_ACCESS_KEY    (任意) 楽天市場商品検索APIのアクセスキー(pk_で始まる)
+  RAKUTEN_AFFILIATE_ID  (任意) 楽天アフィリエイトID(商品リンクをアフィリエイトにする)
 
 必要なライブラリ: requirements.txt を参照 (pip install -r scripts/requirements.txt)
 
@@ -21,11 +24,13 @@ Cocoonテーマのふきだし/マーカー、Amazon購入ボタン)に合わせ
   python scripts/generate_article.py
 """
 
+import html
 import json
 import os
 import re
 import sys
 import threading
+import time
 import urllib.parse
 from datetime import datetime
 
@@ -211,6 +216,7 @@ def _call_claude(
     tools: list | None = None,
     max_tokens: int = 12000,
     system: str | None = None,
+    model: str | None = None,
 ) -> tuple[str, dict]:
     """Claudeを呼び出し、(テキスト全文, パース済みJSON)を返す。
 
@@ -219,7 +225,7 @@ def _call_claude(
     最終回答として採用する。
     """
     api_key = os.environ["ANTHROPIC_API_KEY"]
-    model = os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
+    model = model or os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
 
     payload = {
         "model": model,
@@ -822,11 +828,145 @@ def build_amazon_search_button_html(keyword: str) -> str:
 </div>"""
 
 
+# ---------------------------------------------------------------------------
+# 楽天市場商品検索API(2026年の仕様変更後: openapi.rakuten.co.jp、applicationId+accessKeyが必須)
+# ---------------------------------------------------------------------------
+# 楽天の商品画像はショップの著作物のため、WordPressにはアップロードせず
+# 楽天の画像URLをそのまま表示する(商品ページへのリンクとセットで使う)。
+
+RAKUTEN_ITEM_SEARCH_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
+RAKUTEN_MIN_INTERVAL_SEC = 1.1  # アプリ登録時のQPSが1のため
+_rakuten_lock = threading.Lock()
+_rakuten_last_call = 0.0
+
+
+def rakuten_configured() -> bool:
+    return bool(os.environ.get("RAKUTEN_APP_ID") and os.environ.get("RAKUTEN_ACCESS_KEY"))
+
+
+def clean_rakuten_item_name(name: str, max_chars: int = 45) -> str:
+    """楽天の商品名から【クーポン】★送料無料★のような宣伝文句を除き、表示用に短くする。"""
+    name = re.sub(r"【[^】]*】|\[[^\]]*\]|［[^］]*］|★[^★]*★|◆[^◆]*◆|＼[^／]*／", " ", name or "")
+    name = re.sub(
+        r"お買い物マラソン|スーパーSALE|ポイント\s*\d+倍[！!]?|P\d+倍[！!]?|\d+%\s*OFF|\d+%off|"
+        r"クーポン\S*|送料無料[！!]?|楽天\d位(受賞)?|ギフト無料|あす楽",
+        " ",
+        name,
+        flags=re.IGNORECASE,
+    )
+    name = re.sub(r"\s+", " ", name).strip()
+    if len(name) > max_chars:
+        name = name[:max_chars].rstrip() + "…"
+    return name
+
+
+RAKUTEN_TOY_GENRE_ID = 566382  # 楽天市場「おもちゃ」ジャンル
+RAKUTEN_MIN_REVIEWS = 3
+
+
+def _rakuten_request(keyword: str, genre_id: int | None) -> list:
+    global _rakuten_last_call
+    params = {
+        "applicationId": os.environ["RAKUTEN_APP_ID"],
+        "accessKey": os.environ["RAKUTEN_ACCESS_KEY"],
+        "affiliateId": os.environ.get("RAKUTEN_AFFILIATE_ID", ""),
+        "keyword": keyword,
+        "hits": 10,
+        "imageFlag": 1,
+        "availability": 1,
+        "formatVersion": 2,
+    }
+    if genre_id:
+        params["genreId"] = genre_id
+    with _rakuten_lock:
+        wait = RAKUTEN_MIN_INTERVAL_SEC - (time.time() - _rakuten_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        response = requests.get(
+            RAKUTEN_ITEM_SEARCH_URL,
+            params=params,
+            headers={"Referer": os.environ.get("WP_URL", "https://www.omotya-museum.com").rstrip("/") + "/"},
+            timeout=30,
+        )
+        _rakuten_last_call = time.time()
+
+    if not response.ok:
+        raise RuntimeError(f"楽天APIエラー (HTTP {response.status_code}): {response.text[:300]}")
+    return response.json().get("Items", [])
+
+
+def search_rakuten_items(keyword: str, hits: int = 3) -> list:
+    """楽天市場で商品を検索し、画像付きの商品をhits件返す。
+
+    まず「おもちゃ」ジャンルで探し、なければ全ジャンルで探す。並び順は楽天の関連度順を
+    基本とし(レビュー件数で並べ替えると収納グッズなど関係の薄い人気商品が上位に来るため)、
+    その中でレビューが一定数ある商品を優先する。
+    """
+    raw_items = _rakuten_request(keyword, RAKUTEN_TOY_GENRE_ID) or _rakuten_request(keyword, None)
+
+    items = []
+    for it in raw_items:
+        images = it.get("mediumImageUrls") or []
+        if not images:
+            continue
+        image = images[0] if isinstance(images[0], str) else images[0].get("imageUrl", "")
+        items.append({
+            "name": clean_rakuten_item_name(it.get("itemName", "")),
+            "price": it.get("itemPrice"),
+            "url": it.get("affiliateUrl") or it.get("itemUrl"),
+            "image": re.sub(r"\?_ex=\d+x\d+", "?_ex=300x300", image),
+            "shop": it.get("shopName", ""),
+            "review_average": it.get("reviewAverage") or 0,
+            "review_count": it.get("reviewCount") or 0,
+        })
+    # 関連度の高い上位5件の中でだけレビューありを優先する(下位の人気商品が割り込まないように)
+    head, tail = items[:5], items[5:]
+    head = [i for i in head if i["review_count"] >= RAKUTEN_MIN_REVIEWS] + [
+        i for i in head if i["review_count"] < RAKUTEN_MIN_REVIEWS
+    ]
+    return (head + tail)[:hits]
+
+
+def _amazon_search_url(keyword: str) -> str:
+    tag = os.environ.get("AMAZON_ASSOCIATE_TAG", "")
+    url = f"https://www.amazon.co.jp/s?k={urllib.parse.quote(keyword)}"
+    if tag:
+        url += f"&tag={urllib.parse.quote(tag)}"
+    return url
+
+
+def build_rakuten_card_html(item: dict, amazon_keyword: str | None = None) -> str:
+    """楽天の商品1件ぶんのカード(画像・価格・楽天ボタン+Amazon検索ボタン)。"""
+    name = html.escape(item["name"])
+    price = f"{item['price']:,}円(税込)" if item.get("price") else ""
+    review = ""
+    if item.get("review_count"):
+        review = f"★{item['review_average']:.1f}({item['review_count']:,}件)"
+    amazon_button = ""
+    if amazon_keyword:
+        amazon_button = (
+            f'<a rel="nofollow noopener sponsored" href="{html.escape(_amazon_search_url(amazon_keyword))}" target="_blank" '
+            'style="display:inline-block;background:#ff9900;color:#fff;font-weight:700;padding:6px 16px;'
+            'border-radius:6px;text-decoration:none;font-size:0.85rem;margin:4px 0;">▶ Amazonで探す</a>'
+        )
+    return f"""<div style="border:1px solid #ddd;border-radius:10px;padding:12px;margin:16px 0;display:flex;gap:14px;align-items:center;background:#fafafa;flex-wrap:wrap;">
+<a rel="nofollow noopener sponsored" href="{html.escape(item['url'])}" target="_blank" style="flex-shrink:0;"><img src="{html.escape(item['image'])}" alt="{name}" style="width:120px;height:120px;object-fit:contain;border-radius:6px;background:#fff;"></a>
+<div style="flex:1;min-width:180px;">
+<p style="font-weight:bold;margin:0 0 4px;font-size:0.92rem;">{name}</p>
+<p style="margin:0 0 8px;font-size:0.82rem;color:#555;">{price} {review}</p>
+<a rel="nofollow noopener sponsored" href="{html.escape(item['url'])}" target="_blank" style="display:inline-block;background:#bf0000;color:#fff;font-weight:700;padding:6px 16px;border-radius:6px;text-decoration:none;font-size:0.85rem;margin:4px 6px 4px 0;">▶ 楽天市場で見る</a>
+{amazon_button}
+<p style="margin:6px 0 0;font-size:0.72rem;color:#999;">※価格は記事作成時点のものです</p>
+</div>
+</div>"""
+
+
 def build_inline_product_card_html(name: str, search_keyword: str, log=DEFAULT_LOG) -> str:
     """本文中に挿入する、1商品ぶんの小さな紹介カード(画像+購入リンク)を組み立てる。
 
-    Amazon Creators APIで実商品が取れればその画像・リンクを使い、
-    取れない場合はUnsplashの画像(あれば)+Amazon検索リンクにフォールバックする。
+    Amazon Creators APIで実商品が取れればその画像・リンクを使う。取れない場合は
+    楽天市場の商品(画像・価格・楽天リンク+Amazon検索リンク)、それも無理なら
+    Unsplashの画像(あれば)+Amazon検索リンクにフォールバックする。
     """
     try:
         products = search_amazon_products(search_keyword, item_count=1)
@@ -845,7 +985,17 @@ def build_inline_product_card_html(name: str, search_keyword: str, log=DEFAULT_L
             except AttributeError:
                 continue
     except Exception as exc:
-        log(f"商品「{name}」のAmazon検索に失敗しました(画像リンクにフォールバックします): {exc}")
+        log(f"商品「{name}」のAmazon検索に失敗しました(楽天にフォールバックします): {exc}")
+
+    if rakuten_configured():
+        try:
+            items = search_rakuten_items(search_keyword, hits=1)
+            if items:
+                log(f"商品「{name}」: 楽天市場の「{items[0]['name']}」を紹介します")
+                return build_rakuten_card_html(items[0], amazon_keyword=search_keyword)
+            log(f"商品「{name}」: 楽天市場で該当商品が見つかりませんでした")
+        except Exception as exc:
+            log(f"商品「{name}」の楽天検索に失敗しました: {exc}")
 
     image_url = None
     try:
@@ -879,8 +1029,16 @@ def resolve_category_id(category_name: str, categories: list) -> int | None:
     return None
 
 
-def fetch_unsplash_image_url(keyword: str) -> str | None:
-    """Unsplashから記事テーマに合う画像のURLを1枚取得する。キーがなければNoneを返す。"""
+# Unsplash APIの利用規約では、写真を使う際に撮影者とUnsplashへのクレジット表記(UTMパラメータ付きリンク)と、
+# 写真を保存するときのダウンロード通知(download_locationへのアクセス)が求められる。
+UNSPLASH_UTM = "utm_source=omotya_museum_article_tool&utm_medium=referral"
+
+
+def fetch_unsplash_photo(keyword: str) -> dict | None:
+    """Unsplashから記事テーマに合う写真を1枚探す。キーがなければNoneを返す。
+
+    返り値: {"url", "photographer", "photographer_url", "download_location", "alt"}
+    """
     access_key = os.environ.get("UNSPLASH_ACCESS_KEY")
     if not access_key:
         return None
@@ -895,7 +1053,90 @@ def fetch_unsplash_image_url(keyword: str) -> str | None:
     results = response.json().get("results", [])
     if not results:
         return None
-    return results[0]["urls"]["regular"]
+    photo = results[0]
+    user = photo.get("user") or {}
+    return {
+        "url": photo["urls"]["regular"],
+        "photographer": user.get("name") or user.get("username") or "Unsplash",
+        "photographer_url": f"{(user.get('links') or {}).get('html', 'https://unsplash.com')}?{UNSPLASH_UTM}",
+        "download_location": (photo.get("links") or {}).get("download_location"),
+        "alt": photo.get("alt_description") or keyword,
+    }
+
+
+def unsplash_credit_html(photo: dict) -> str:
+    return (
+        f'Photo by <a href="{html.escape(photo["photographer_url"])}" rel="noopener" target="_blank">'
+        f'{html.escape(photo["photographer"])}</a> on '
+        f'<a href="https://unsplash.com/?{UNSPLASH_UTM}" rel="noopener" target="_blank">Unsplash</a>'
+    )
+
+
+def fetch_unsplash_image_url(keyword: str) -> str | None:
+    """Unsplashから記事テーマに合う画像のURLを1枚取得する(Unsplash上の画像をそのまま表示する用途)。"""
+    photo = fetch_unsplash_photo(keyword)
+    return photo["url"] if photo else None
+
+
+LIGHT_MODEL = "claude-haiku-4-5-20251001"
+
+
+def build_unsplash_query(title: str, keyword: str) -> str:
+    """Unsplashは英語の検索の方が精度が高いため、記事タイトルから英語の検索語を作る。"""
+    try:
+        _, data = _call_claude(
+            [{"role": "user", "content": (
+                "次のブログ記事のアイキャッチ写真をストックフォトサイトで探します。"
+                "記事の内容に合う写真が見つかりやすい、短い英語の検索語(2〜4語)を考えてください。"
+                "人物の顔のアップより、おもちゃや遊んでいる様子が写る写真が望ましいです。\n"
+                f"記事タイトル: {title}\n関連キーワード: {keyword}\n"
+                '必ず {"query": "..."} のJSONだけを返してください。'
+            )}],
+            max_tokens=200,
+            model=LIGHT_MODEL,
+        )
+        return (data.get("query") or "").strip() or keyword
+    except Exception:
+        return keyword
+
+
+def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) -> int | None:
+    """Unsplashの写真をWordPressにアップロードしてアイキャッチ用のメディアIDを返す。
+
+    規約に沿って、ダウンロード通知を送り、メディアのキャプションに撮影者のクレジットを入れる。
+    """
+    query = build_unsplash_query(title, keyword)
+    log(f"アイキャッチ画像をUnsplashで検索しています(検索語: {query})...")
+    photo = fetch_unsplash_photo(query) or (fetch_unsplash_photo(keyword) if query != keyword else None)
+    if not photo:
+        log(f"Unsplashで「{keyword}」の写真が見つかりませんでした(アイキャッチなしで保存します)")
+        return None
+
+    if photo.get("download_location"):
+        try:
+            requests.get(
+                photo["download_location"],
+                headers={"Authorization": f"Client-ID {os.environ['UNSPLASH_ACCESS_KEY']}"},
+                timeout=30,
+            )
+        except Exception as exc:
+            log(f"Unsplashへのダウンロード通知に失敗しました(処理は続けます): {exc}")
+
+    # ファイル名は英数字のみ使えるため、英語の検索語から作る(例: eyecatch-bath-toys-water-play)
+    slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "photo"
+    media_id = upload_featured_image(photo["url"], f"eyecatch-{slug}")
+    try:
+        requests.post(
+            f"{os.environ['WP_URL'].rstrip('/')}/wp-json/wp/v2/media/{media_id}",
+            auth=(os.environ["WP_USERNAME"], os.environ["WP_APP_PASSWORD"]),
+            headers={"User-Agent": BROWSER_USER_AGENT},
+            json={"caption": unsplash_credit_html(photo), "alt_text": photo["alt"]},
+            timeout=30,
+        ).raise_for_status()
+    except Exception as exc:
+        log(f"アイキャッチ画像のクレジット表記の設定に失敗しました(メディアライブラリで手動設定してください): {exc}")
+    log(f"アイキャッチ画像を設定しました(Photo by {photo['photographer']} on Unsplash)")
+    return media_id
 
 
 def upload_image_bytes_to_wp(image_bytes: bytes, filename: str, mime_type: str = "image/jpeg") -> dict:
@@ -903,6 +1144,11 @@ def upload_image_bytes_to_wp(image_bytes: bytes, filename: str, mime_type: str =
     wp_url = os.environ["WP_URL"].rstrip("/")
     username = os.environ["WP_USERNAME"]
     app_password = os.environ["WP_APP_PASSWORD"]
+
+    # HTTPヘッダーは英数字しか送れないため、日本語などを含むファイル名は英数字に置き換える
+    stem, _, ext = filename.rpartition(".")
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "-", stem if ext else filename).strip("-")
+    filename = f"{stem or 'image-' + datetime.now().strftime('%Y%m%d%H%M%S')}.{ext or 'jpg'}"
 
     response = requests.post(
         f"{wp_url}/wp-json/wp/v2/media",
@@ -1390,7 +1636,17 @@ def finalize_and_publish(
             products = search_amazon_products(amazon_keyword)
             product_html = build_product_card_html(products)
         except Exception as exc:
-            log(f"Amazon商品検索に失敗しました(検索リンクにフォールバックします): {exc}")
+            log(f"Amazon商品検索に失敗しました(楽天にフォールバックします): {exc}")
+        if not product_html and rakuten_configured():
+            try:
+                items = search_rakuten_items(amazon_keyword, hits=3)
+                product_html = "\n".join(
+                    build_rakuten_card_html(item, amazon_keyword=amazon_keyword) for item in items
+                )
+                if items:
+                    log(f"おすすめ商品: 楽天市場から{len(items)}件を掲載します")
+            except Exception as exc:
+                log(f"楽天の商品検索に失敗しました(Amazon検索リンクにフォールバックします): {exc}")
         if not product_html:
             product_html = build_amazon_search_button_html(amazon_keyword)
 
@@ -1440,9 +1696,9 @@ def finalize_and_publish(
         featured_media_id = None
         if include_featured_image and amazon_keyword:
             try:
-                image_url = fetch_unsplash_image_url(amazon_keyword)
-                if image_url:
-                    featured_media_id = upload_featured_image(image_url, article["title"][:40])
+                featured_media_id = set_featured_image_from_unsplash(
+                    amazon_keyword, article["title"], log=log
+                )
             except Exception as exc:
                 log(f"アイキャッチ画像の設定に失敗しました(画像なしで投稿します): {exc}")
 
