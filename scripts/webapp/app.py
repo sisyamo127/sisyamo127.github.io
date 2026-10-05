@@ -727,6 +727,27 @@ def status_page():
             "detail": "未設定です(なくても検索リンク形式で自動フォールバックします)",
         })
 
+    if ga.rakuten_configured():
+        try:
+            ga.search_rakuten_items("おもちゃ", hits=1)
+            services.append({
+                "name": "楽天市場API(商品画像・リンク)",
+                "status": "ok",
+                "detail": "接続OK" + ("" if os.environ.get("RAKUTEN_AFFILIATE_ID") else "(RAKUTEN_AFFILIATE_IDが未設定のため、リンクはアフィリエイトになりません)"),
+            })
+        except Exception as exc:
+            services.append({
+                "name": "楽天市場API(商品画像・リンク)",
+                "status": "ng",
+                "detail": f"{exc} ― 自宅回線のIPアドレスが変わった場合は、楽天ウェブサービスのアプリ設定で許可IPを更新してください",
+            })
+    else:
+        services.append({
+            "name": "楽天市場API(商品画像・リンク)",
+            "status": "warn",
+            "detail": "RAKUTEN_APP_ID / RAKUTEN_ACCESS_KEYが未設定です(Amazon検索リンクのみになります)",
+        })
+
     if os.environ.get("WP_URL") and os.environ.get("WP_USERNAME") and os.environ.get("WP_APP_PASSWORD"):
         try:
             ga.fetch_categories()

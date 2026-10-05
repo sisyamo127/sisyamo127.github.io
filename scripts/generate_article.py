@@ -14,6 +14,9 @@ Cocoonテーマのふきだし/マーカー、Amazon購入ボタン)に合わせ
   ANTHROPIC_MODEL       (任意) 使用するモデルID。省略時は claude-sonnet-5
   UNSPLASH_ACCESS_KEY   (任意) アイキャッチ画像の自動取得に使用
   OPENAI_API_KEY        (任意) 画像生成機能(generate_image_with_openai)に使用
+  RAKUTEN_APP_ID        (任意) 楽天市場商品検索APIのアプリケーションID(商品画像・リンクに使用)
+  RAKUTEN_ACCESS_KEY    (任意) 楽天市場商品検索APIのアクセスキー(pk_で始まる)
+  RAKUTEN_AFFILIATE_ID  (任意) 楽天アフィリエイトID(商品リンクをアフィリエイトにする)
 
 必要なライブラリ: requirements.txt を参照 (pip install -r scripts/requirements.txt)
 
@@ -21,11 +24,13 @@ Cocoonテーマのふきだし/マーカー、Amazon購入ボタン)に合わせ
   python scripts/generate_article.py
 """
 
+import html
 import json
 import os
 import re
 import sys
 import threading
+import time
 import urllib.parse
 from datetime import datetime
 
@@ -822,11 +827,145 @@ def build_amazon_search_button_html(keyword: str) -> str:
 </div>"""
 
 
+# ---------------------------------------------------------------------------
+# 楽天市場商品検索API(2026年の仕様変更後: openapi.rakuten.co.jp、applicationId+accessKeyが必須)
+# ---------------------------------------------------------------------------
+# 楽天の商品画像はショップの著作物のため、WordPressにはアップロードせず
+# 楽天の画像URLをそのまま表示する(商品ページへのリンクとセットで使う)。
+
+RAKUTEN_ITEM_SEARCH_URL = "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
+RAKUTEN_MIN_INTERVAL_SEC = 1.1  # アプリ登録時のQPSが1のため
+_rakuten_lock = threading.Lock()
+_rakuten_last_call = 0.0
+
+
+def rakuten_configured() -> bool:
+    return bool(os.environ.get("RAKUTEN_APP_ID") and os.environ.get("RAKUTEN_ACCESS_KEY"))
+
+
+def clean_rakuten_item_name(name: str, max_chars: int = 45) -> str:
+    """楽天の商品名から【クーポン】★送料無料★のような宣伝文句を除き、表示用に短くする。"""
+    name = re.sub(r"【[^】]*】|\[[^\]]*\]|［[^］]*］|★[^★]*★|◆[^◆]*◆|＼[^／]*／", " ", name or "")
+    name = re.sub(
+        r"お買い物マラソン|スーパーSALE|ポイント\s*\d+倍[！!]?|P\d+倍[！!]?|\d+%\s*OFF|\d+%off|"
+        r"クーポン\S*|送料無料[！!]?|楽天\d位(受賞)?|ギフト無料|あす楽",
+        " ",
+        name,
+        flags=re.IGNORECASE,
+    )
+    name = re.sub(r"\s+", " ", name).strip()
+    if len(name) > max_chars:
+        name = name[:max_chars].rstrip() + "…"
+    return name
+
+
+RAKUTEN_TOY_GENRE_ID = 566382  # 楽天市場「おもちゃ」ジャンル
+RAKUTEN_MIN_REVIEWS = 3
+
+
+def _rakuten_request(keyword: str, genre_id: int | None) -> list:
+    global _rakuten_last_call
+    params = {
+        "applicationId": os.environ["RAKUTEN_APP_ID"],
+        "accessKey": os.environ["RAKUTEN_ACCESS_KEY"],
+        "affiliateId": os.environ.get("RAKUTEN_AFFILIATE_ID", ""),
+        "keyword": keyword,
+        "hits": 10,
+        "imageFlag": 1,
+        "availability": 1,
+        "formatVersion": 2,
+    }
+    if genre_id:
+        params["genreId"] = genre_id
+    with _rakuten_lock:
+        wait = RAKUTEN_MIN_INTERVAL_SEC - (time.time() - _rakuten_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        response = requests.get(
+            RAKUTEN_ITEM_SEARCH_URL,
+            params=params,
+            headers={"Referer": os.environ.get("WP_URL", "https://www.omotya-museum.com").rstrip("/") + "/"},
+            timeout=30,
+        )
+        _rakuten_last_call = time.time()
+
+    if not response.ok:
+        raise RuntimeError(f"楽天APIエラー (HTTP {response.status_code}): {response.text[:300]}")
+    return response.json().get("Items", [])
+
+
+def search_rakuten_items(keyword: str, hits: int = 3) -> list:
+    """楽天市場で商品を検索し、画像付きの商品をhits件返す。
+
+    まず「おもちゃ」ジャンルで探し、なければ全ジャンルで探す。並び順は楽天の関連度順を
+    基本とし(レビュー件数で並べ替えると収納グッズなど関係の薄い人気商品が上位に来るため)、
+    その中でレビューが一定数ある商品を優先する。
+    """
+    raw_items = _rakuten_request(keyword, RAKUTEN_TOY_GENRE_ID) or _rakuten_request(keyword, None)
+
+    items = []
+    for it in raw_items:
+        images = it.get("mediumImageUrls") or []
+        if not images:
+            continue
+        image = images[0] if isinstance(images[0], str) else images[0].get("imageUrl", "")
+        items.append({
+            "name": clean_rakuten_item_name(it.get("itemName", "")),
+            "price": it.get("itemPrice"),
+            "url": it.get("affiliateUrl") or it.get("itemUrl"),
+            "image": re.sub(r"\?_ex=\d+x\d+", "?_ex=300x300", image),
+            "shop": it.get("shopName", ""),
+            "review_average": it.get("reviewAverage") or 0,
+            "review_count": it.get("reviewCount") or 0,
+        })
+    # 関連度の高い上位5件の中でだけレビューありを優先する(下位の人気商品が割り込まないように)
+    head, tail = items[:5], items[5:]
+    head = [i for i in head if i["review_count"] >= RAKUTEN_MIN_REVIEWS] + [
+        i for i in head if i["review_count"] < RAKUTEN_MIN_REVIEWS
+    ]
+    return (head + tail)[:hits]
+
+
+def _amazon_search_url(keyword: str) -> str:
+    tag = os.environ.get("AMAZON_ASSOCIATE_TAG", "")
+    url = f"https://www.amazon.co.jp/s?k={urllib.parse.quote(keyword)}"
+    if tag:
+        url += f"&tag={urllib.parse.quote(tag)}"
+    return url
+
+
+def build_rakuten_card_html(item: dict, amazon_keyword: str | None = None) -> str:
+    """楽天の商品1件ぶんのカード(画像・価格・楽天ボタン+Amazon検索ボタン)。"""
+    name = html.escape(item["name"])
+    price = f"{item['price']:,}円(税込)" if item.get("price") else ""
+    review = ""
+    if item.get("review_count"):
+        review = f"★{item['review_average']:.1f}({item['review_count']:,}件)"
+    amazon_button = ""
+    if amazon_keyword:
+        amazon_button = (
+            f'<a rel="nofollow noopener sponsored" href="{html.escape(_amazon_search_url(amazon_keyword))}" target="_blank" '
+            'style="display:inline-block;background:#ff9900;color:#fff;font-weight:700;padding:6px 16px;'
+            'border-radius:6px;text-decoration:none;font-size:0.85rem;margin:4px 0;">▶ Amazonで探す</a>'
+        )
+    return f"""<div style="border:1px solid #ddd;border-radius:10px;padding:12px;margin:16px 0;display:flex;gap:14px;align-items:center;background:#fafafa;flex-wrap:wrap;">
+<a rel="nofollow noopener sponsored" href="{html.escape(item['url'])}" target="_blank" style="flex-shrink:0;"><img src="{html.escape(item['image'])}" alt="{name}" style="width:120px;height:120px;object-fit:contain;border-radius:6px;background:#fff;"></a>
+<div style="flex:1;min-width:180px;">
+<p style="font-weight:bold;margin:0 0 4px;font-size:0.92rem;">{name}</p>
+<p style="margin:0 0 8px;font-size:0.82rem;color:#555;">{price} {review}</p>
+<a rel="nofollow noopener sponsored" href="{html.escape(item['url'])}" target="_blank" style="display:inline-block;background:#bf0000;color:#fff;font-weight:700;padding:6px 16px;border-radius:6px;text-decoration:none;font-size:0.85rem;margin:4px 6px 4px 0;">▶ 楽天市場で見る</a>
+{amazon_button}
+<p style="margin:6px 0 0;font-size:0.72rem;color:#999;">※価格は記事作成時点のものです</p>
+</div>
+</div>"""
+
+
 def build_inline_product_card_html(name: str, search_keyword: str, log=DEFAULT_LOG) -> str:
     """本文中に挿入する、1商品ぶんの小さな紹介カード(画像+購入リンク)を組み立てる。
 
-    Amazon Creators APIで実商品が取れればその画像・リンクを使い、
-    取れない場合はUnsplashの画像(あれば)+Amazon検索リンクにフォールバックする。
+    Amazon Creators APIで実商品が取れればその画像・リンクを使う。取れない場合は
+    楽天市場の商品(画像・価格・楽天リンク+Amazon検索リンク)、それも無理なら
+    Unsplashの画像(あれば)+Amazon検索リンクにフォールバックする。
     """
     try:
         products = search_amazon_products(search_keyword, item_count=1)
@@ -845,7 +984,17 @@ def build_inline_product_card_html(name: str, search_keyword: str, log=DEFAULT_L
             except AttributeError:
                 continue
     except Exception as exc:
-        log(f"商品「{name}」のAmazon検索に失敗しました(画像リンクにフォールバックします): {exc}")
+        log(f"商品「{name}」のAmazon検索に失敗しました(楽天にフォールバックします): {exc}")
+
+    if rakuten_configured():
+        try:
+            items = search_rakuten_items(search_keyword, hits=1)
+            if items:
+                log(f"商品「{name}」: 楽天市場の「{items[0]['name']}」を紹介します")
+                return build_rakuten_card_html(items[0], amazon_keyword=search_keyword)
+            log(f"商品「{name}」: 楽天市場で該当商品が見つかりませんでした")
+        except Exception as exc:
+            log(f"商品「{name}」の楽天検索に失敗しました: {exc}")
 
     image_url = None
     try:
@@ -1390,7 +1539,17 @@ def finalize_and_publish(
             products = search_amazon_products(amazon_keyword)
             product_html = build_product_card_html(products)
         except Exception as exc:
-            log(f"Amazon商品検索に失敗しました(検索リンクにフォールバックします): {exc}")
+            log(f"Amazon商品検索に失敗しました(楽天にフォールバックします): {exc}")
+        if not product_html and rakuten_configured():
+            try:
+                items = search_rakuten_items(amazon_keyword, hits=3)
+                product_html = "\n".join(
+                    build_rakuten_card_html(item, amazon_keyword=amazon_keyword) for item in items
+                )
+                if items:
+                    log(f"おすすめ商品: 楽天市場から{len(items)}件を掲載します")
+            except Exception as exc:
+                log(f"楽天の商品検索に失敗しました(Amazon検索リンクにフォールバックします): {exc}")
         if not product_html:
             product_html = build_amazon_search_button_html(amazon_keyword)
 
