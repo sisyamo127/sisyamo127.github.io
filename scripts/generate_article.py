@@ -216,6 +216,7 @@ def _call_claude(
     tools: list | None = None,
     max_tokens: int = 12000,
     system: str | None = None,
+    model: str | None = None,
 ) -> tuple[str, dict]:
     """Claudeを呼び出し、(テキスト全文, パース済みJSON)を返す。
 
@@ -224,7 +225,7 @@ def _call_claude(
     最終回答として採用する。
     """
     api_key = os.environ["ANTHROPIC_API_KEY"]
-    model = os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
+    model = model or os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
 
     payload = {
         "model": model,
@@ -1028,8 +1029,16 @@ def resolve_category_id(category_name: str, categories: list) -> int | None:
     return None
 
 
-def fetch_unsplash_image_url(keyword: str) -> str | None:
-    """Unsplashから記事テーマに合う画像のURLを1枚取得する。キーがなければNoneを返す。"""
+# Unsplash APIの利用規約では、写真を使う際に撮影者とUnsplashへのクレジット表記(UTMパラメータ付きリンク)と、
+# 写真を保存するときのダウンロード通知(download_locationへのアクセス)が求められる。
+UNSPLASH_UTM = "utm_source=omotya_museum_article_tool&utm_medium=referral"
+
+
+def fetch_unsplash_photo(keyword: str) -> dict | None:
+    """Unsplashから記事テーマに合う写真を1枚探す。キーがなければNoneを返す。
+
+    返り値: {"url", "photographer", "photographer_url", "download_location", "alt"}
+    """
     access_key = os.environ.get("UNSPLASH_ACCESS_KEY")
     if not access_key:
         return None
@@ -1044,7 +1053,90 @@ def fetch_unsplash_image_url(keyword: str) -> str | None:
     results = response.json().get("results", [])
     if not results:
         return None
-    return results[0]["urls"]["regular"]
+    photo = results[0]
+    user = photo.get("user") or {}
+    return {
+        "url": photo["urls"]["regular"],
+        "photographer": user.get("name") or user.get("username") or "Unsplash",
+        "photographer_url": f"{(user.get('links') or {}).get('html', 'https://unsplash.com')}?{UNSPLASH_UTM}",
+        "download_location": (photo.get("links") or {}).get("download_location"),
+        "alt": photo.get("alt_description") or keyword,
+    }
+
+
+def unsplash_credit_html(photo: dict) -> str:
+    return (
+        f'Photo by <a href="{html.escape(photo["photographer_url"])}" rel="noopener" target="_blank">'
+        f'{html.escape(photo["photographer"])}</a> on '
+        f'<a href="https://unsplash.com/?{UNSPLASH_UTM}" rel="noopener" target="_blank">Unsplash</a>'
+    )
+
+
+def fetch_unsplash_image_url(keyword: str) -> str | None:
+    """Unsplashから記事テーマに合う画像のURLを1枚取得する(Unsplash上の画像をそのまま表示する用途)。"""
+    photo = fetch_unsplash_photo(keyword)
+    return photo["url"] if photo else None
+
+
+LIGHT_MODEL = "claude-haiku-4-5-20251001"
+
+
+def build_unsplash_query(title: str, keyword: str) -> str:
+    """Unsplashは英語の検索の方が精度が高いため、記事タイトルから英語の検索語を作る。"""
+    try:
+        _, data = _call_claude(
+            [{"role": "user", "content": (
+                "次のブログ記事のアイキャッチ写真をストックフォトサイトで探します。"
+                "記事の内容に合う写真が見つかりやすい、短い英語の検索語(2〜4語)を考えてください。"
+                "人物の顔のアップより、おもちゃや遊んでいる様子が写る写真が望ましいです。\n"
+                f"記事タイトル: {title}\n関連キーワード: {keyword}\n"
+                '必ず {"query": "..."} のJSONだけを返してください。'
+            )}],
+            max_tokens=200,
+            model=LIGHT_MODEL,
+        )
+        return (data.get("query") or "").strip() or keyword
+    except Exception:
+        return keyword
+
+
+def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) -> int | None:
+    """Unsplashの写真をWordPressにアップロードしてアイキャッチ用のメディアIDを返す。
+
+    規約に沿って、ダウンロード通知を送り、メディアのキャプションに撮影者のクレジットを入れる。
+    """
+    query = build_unsplash_query(title, keyword)
+    log(f"アイキャッチ画像をUnsplashで検索しています(検索語: {query})...")
+    photo = fetch_unsplash_photo(query) or (fetch_unsplash_photo(keyword) if query != keyword else None)
+    if not photo:
+        log(f"Unsplashで「{keyword}」の写真が見つかりませんでした(アイキャッチなしで保存します)")
+        return None
+
+    if photo.get("download_location"):
+        try:
+            requests.get(
+                photo["download_location"],
+                headers={"Authorization": f"Client-ID {os.environ['UNSPLASH_ACCESS_KEY']}"},
+                timeout=30,
+            )
+        except Exception as exc:
+            log(f"Unsplashへのダウンロード通知に失敗しました(処理は続けます): {exc}")
+
+    # ファイル名は英数字のみ使えるため、英語の検索語から作る(例: eyecatch-bath-toys-water-play)
+    slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "photo"
+    media_id = upload_featured_image(photo["url"], f"eyecatch-{slug}")
+    try:
+        requests.post(
+            f"{os.environ['WP_URL'].rstrip('/')}/wp-json/wp/v2/media/{media_id}",
+            auth=(os.environ["WP_USERNAME"], os.environ["WP_APP_PASSWORD"]),
+            headers={"User-Agent": BROWSER_USER_AGENT},
+            json={"caption": unsplash_credit_html(photo), "alt_text": photo["alt"]},
+            timeout=30,
+        ).raise_for_status()
+    except Exception as exc:
+        log(f"アイキャッチ画像のクレジット表記の設定に失敗しました(メディアライブラリで手動設定してください): {exc}")
+    log(f"アイキャッチ画像を設定しました(Photo by {photo['photographer']} on Unsplash)")
+    return media_id
 
 
 def upload_image_bytes_to_wp(image_bytes: bytes, filename: str, mime_type: str = "image/jpeg") -> dict:
@@ -1052,6 +1144,11 @@ def upload_image_bytes_to_wp(image_bytes: bytes, filename: str, mime_type: str =
     wp_url = os.environ["WP_URL"].rstrip("/")
     username = os.environ["WP_USERNAME"]
     app_password = os.environ["WP_APP_PASSWORD"]
+
+    # HTTPヘッダーは英数字しか送れないため、日本語などを含むファイル名は英数字に置き換える
+    stem, _, ext = filename.rpartition(".")
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "-", stem if ext else filename).strip("-")
+    filename = f"{stem or 'image-' + datetime.now().strftime('%Y%m%d%H%M%S')}.{ext or 'jpg'}"
 
     response = requests.post(
         f"{wp_url}/wp-json/wp/v2/media",
@@ -1599,9 +1696,9 @@ def finalize_and_publish(
         featured_media_id = None
         if include_featured_image and amazon_keyword:
             try:
-                image_url = fetch_unsplash_image_url(amazon_keyword)
-                if image_url:
-                    featured_media_id = upload_featured_image(image_url, article["title"][:40])
+                featured_media_id = set_featured_image_from_unsplash(
+                    amazon_keyword, article["title"], log=log
+                )
             except Exception as exc:
                 log(f"アイキャッチ画像の設定に失敗しました(画像なしで投稿します): {exc}")
 
