@@ -446,13 +446,41 @@ def rewrite_start():
     category = request.form.get("category", "").strip()
     include_amazon = request.form.get("include_amazon") == "on"
     include_image = request.form.get("include_image") == "on"
+    mode = request.form.get("mode", "full")
+
+    if mode == "eyecatch":
+        # アイキャッチだけ作り直す(本文・公開状態は変えないので、プレビュー・承認の段階は挟まない)
+        def eyecatch_task(log):
+            entry = {
+                "id": uuid.uuid4().hex,
+                "type": "image",
+                "mode": "eyecatch",
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "title": "",
+                "wp_link": None,
+                "image_url": None,
+                "error": None,
+            }
+            try:
+                done = ga.replace_featured_image(post_id, log=log)
+                entry.update(title=done["title"], wp_link=done["link"], image_url=done["image_url"])
+            except Exception as exc:
+                log(f"アイキャッチの差し替えに失敗しました: {exc}")
+                entry["error"] = str(exc)
+            entry["title"] = entry["title"] or f"記事ID {post_id}"
+            entry["usage"] = ga.get_usage_summary()
+            save_history_entry(entry)
+            return entry
+
+        return redirect(url_for("job_status", job_id=start_job(eyecatch_task)))
 
     def task(log):
         categories = ga.fetch_categories()
         existing = ga.fetch_post_for_rewrite(post_id)
         log(f"「{existing['title']}」をリライトしています...")
         article = ga.generate_rewrite(
-            existing["title"], existing["text"], categories, category=category or None, log=log
+            existing["title"], existing["text"], categories, category=category or None, log=log,
+            exclude_post_id=post_id,
         )
         return {
             "post_id": post_id,

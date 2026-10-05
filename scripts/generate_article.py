@@ -37,6 +37,8 @@ from datetime import datetime
 import requests
 from dotenv import load_dotenv
 
+from eyecatch import render_eyecatch
+
 load_dotenv()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -326,7 +328,7 @@ def _generate_with_expansion(messages: list, max_expand_attempts: int = 2, log=D
                 f"{MIN_CONTENT_CHARS}文字以上になるよう、既存の内容を薄めず、具体例・詳細な説明・"
                 "追加のセクション(h2/h3)を加えて拡張してください。"
                 "他のフィールド(title, meta_description等)も含め、同じJSON形式で全文を出力し直してください。"
-                "[[MID_CONVERSATION]]・[[PRODUCT:数字]]・[[PLACE:数字]]のプレースホルダーは、増やしたり消したりせずそのまま維持してください。"
+                "[[MID_CONVERSATION]]・[[PRODUCT:数字]]・[[PLACE:数字]]・[[RELATED:数字]]のプレースホルダーは、増やしたり消したりせずそのまま維持してください。"
                 "加筆する際も、紹介済みの商品以外に新しい具体的なブランド名・商品名は追加しないでください。"
             ),
         })
@@ -707,6 +709,22 @@ def build_content_prompt_from_outline(outline: dict, reference_text: str | None 
     else:
         place_instruction = ""
 
+    related_posts = outline.get("related_posts", [])
+    if related_posts:
+        related_lines = "\n".join(
+            f'- [[RELATED:{i}]] 見出し「{r["heading"]}」で紹介する関連記事: 「{r["title"]}」(共通点: {r.get("reason", "")})'
+            for i, r in enumerate(related_posts)
+        )
+        related_instruction = f"""
+## 関連記事(サイト内の別記事)の紹介
+以下はこのサイトの既存記事で、内容が共通・類似しています。指定の見出しの中で内容が重なる箇所に、
+「◯◯については、こちらの記事で詳しく紹介しています」のように一文で触れ、その直後にプレースホルダーを1回だけ挿入してください。
+後で記事へのリンクカードに置き換えるので、他の文章とは改行で区切ること。関連記事の中身を推測で要約・創作しないこと。
+{related_lines}
+"""
+    else:
+        related_instruction = ""
+
     reference_section = ""
     if reference_text:
         reference_section = f"""
@@ -723,7 +741,7 @@ SEOキーワード: {keywords}
 {reference_section}
 ## 構成案(この通りの見出し・順序で書くこと)
 {outline_lines}
-{product_instruction}{place_instruction}
+{product_instruction}{place_instruction}{related_instruction}
 
 ## 文体・トーン
 - 「です・ます調」で、丁寧で優しい雰囲気にする
@@ -759,6 +777,7 @@ def generate_article_from_outline(
     max_expand_attempts: int = 2,
     log=DEFAULT_LOG,
     reference_text: str | None = None,
+    exclude_post_id: int | None = None,
 ) -> dict:
     """承認済みのアウトラインに沿って本文を生成し、タイトル等の固定フィールドと結合する。
 
@@ -769,6 +788,14 @@ def generate_article_from_outline(
     if mentions and not any("item" in m for m in mentions):
         log(f"紹介する商品({len(mentions[:MAX_PRODUCT_MENTIONS])}件)を楽天市場で探しています...")
         outline["product_mentions"] = resolve_product_mentions(mentions, log=log)
+
+    if "related_posts" not in outline:
+        log("内容が共通・類似しているサイト内の記事を探しています...")
+        try:
+            outline["related_posts"] = select_related_posts(outline, exclude_post_id=exclude_post_id, log=log)
+        except Exception as exc:
+            log(f"関連記事の選定に失敗しました(関連記事の紹介なしで書きます): {exc}")
+            outline["related_posts"] = []
 
     messages = [{"role": "user", "content": build_content_prompt_from_outline(outline, reference_text)}]
     result = _generate_with_expansion(messages, max_expand_attempts, log)
@@ -856,6 +883,7 @@ def generate_rewrite(
     category: str | None = None,
     max_expand_attempts: int = 2,
     log=DEFAULT_LOG,
+    exclude_post_id: int | None = None,
 ) -> dict:
     """既存記事を参考に、ハウススタイルへリライトした記事を生成する。
 
@@ -866,7 +894,8 @@ def generate_rewrite(
     )
     log(f"リライトの構成案を作成しました(見出し{len(plan.get('outline', []))}個)")
     return generate_article_from_outline(
-        plan, max_expand_attempts=max_expand_attempts, log=log, reference_text=existing_text
+        plan, max_expand_attempts=max_expand_attempts, log=log, reference_text=existing_text,
+        exclude_post_id=exclude_post_id,
     )
 
 
@@ -1138,6 +1167,84 @@ def build_inline_product_card_html(name: str, search_keyword: str, log=DEFAULT_L
 </div>"""
 
 
+MAX_RELATED_POSTS = 3
+
+
+def fetch_published_posts_brief() -> list:
+    """関連記事選び用に、公開済みの記事一覧(タイトル・URL・抜粋)を取得する。"""
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    posts, page = [], 1
+    while True:
+        response = requests.get(
+            f"{wp_url}/wp-json/wp/v2/posts",
+            params={"per_page": 100, "page": page, "status": "publish", "_fields": "id,title,link,excerpt"},
+            headers={"User-Agent": BROWSER_USER_AGENT},
+            timeout=30,
+        )
+        response.raise_for_status()
+        for p in response.json():
+            excerpt = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", (p.get("excerpt") or {}).get("rendered", ""))).strip()
+            posts.append({
+                "id": p["id"],
+                "title": html.unescape(p["title"]["rendered"]),
+                "link": p["link"],
+                "excerpt": html.unescape(excerpt)[:120],
+            })
+        if page >= int(response.headers.get("X-WP-TotalPages", "1") or 1):
+            break
+        page += 1
+    return posts
+
+
+def select_related_posts(outline: dict, exclude_post_id: int | None = None, log=DEFAULT_LOG) -> list:
+    """これから書く記事と内容が共通・類似している既存記事を最大3件選び、紹介する見出しを決める(内部リンク用)。"""
+    posts = [p for p in fetch_published_posts_brief() if p["id"] != exclude_post_id]
+    if not posts:
+        return []
+    headings = [o["heading"] for o in outline.get("outline", [])]
+    listing = "\n".join(f"{i}: {p['title']} / {p['excerpt']}" for i, p in enumerate(posts))
+    _, data = _call_claude(
+        [{"role": "user", "content": (
+            "これから次の記事を書きます。サイト内の既存記事の中から、内容が共通・類似していて、読者が"
+            f"あわせて読むと役立つ記事を最大{MAX_RELATED_POSTS}件選んでください。"
+            "テーマが本当に重なるものだけを選び、無理に選ばないこと(なければ空配列)。\n\n"
+            f"## これから書く記事\nタイトル: {outline.get('title', '')}\n見出し: {' / '.join(headings)}\n\n"
+            f"## 既存記事(番号: タイトル / 抜粋)\n{listing}\n\n"
+            "それぞれ、紹介するのに最も合う見出し(上の見出しと同じ文字列)と、共通点を一言で添えてください。\n"
+            '{"related": [{"index": 番号, "heading": "見出し", "reason": "共通点"}]} のJSONだけを返してください。'
+        )}],
+        max_tokens=800,
+        model=LIGHT_MODEL,
+    )
+    related, seen = [], set()
+    for r in data.get("related") or []:
+        try:
+            post = posts[int(r.get("index"))]
+        except (TypeError, ValueError, IndexError):
+            continue
+        if post["id"] in seen:
+            continue
+        seen.add(post["id"])
+        heading = r.get("heading") if r.get("heading") in headings else (headings[-1] if headings else "")
+        related.append({**post, "heading": heading, "reason": (r.get("reason") or "").strip()})
+    for r in related[:MAX_RELATED_POSTS]:
+        log(f"関連記事として紹介: {r['title']}(共通点: {r['reason']})")
+    if not related:
+        log("内容が重なる既存記事は見つかりませんでした(関連記事の紹介なし)")
+    return related[:MAX_RELATED_POSTS]
+
+
+def build_related_post_card_html(post: dict) -> str:
+    """本文中に入れる「あわせて読みたい」の内部リンクカード。"""
+    return (
+        '<div style="border:1px solid #e5e7eb;border-left:4px solid #ff6600;border-radius:6px;'
+        'padding:10px 14px;margin:16px 0;background:#fffaf5;">'
+        '<span style="display:inline-block;font-size:0.75rem;font-weight:bold;color:#ff6600;margin-bottom:4px;">あわせて読みたい</span><br>'
+        f'<a href="{html.escape(post["link"])}" style="font-weight:bold;text-decoration:none;">{html.escape(post["title"])}</a>'
+        "</div>"
+    )
+
+
 MAX_PRODUCT_MENTIONS = 6
 
 
@@ -1350,26 +1457,7 @@ def resolve_category_id(category_name: str, categories: list) -> int | None:
 UNSPLASH_UTM = "utm_source=omotya_museum_article_tool&utm_medium=referral"
 
 
-def fetch_unsplash_photo(keyword: str) -> dict | None:
-    """Unsplashから記事テーマに合う写真を1枚探す。キーがなければNoneを返す。
-
-    返り値: {"url", "photographer", "photographer_url", "download_location", "alt"}
-    """
-    access_key = os.environ.get("UNSPLASH_ACCESS_KEY")
-    if not access_key:
-        return None
-
-    response = requests.get(
-        "https://api.unsplash.com/search/photos",
-        params={"query": keyword, "per_page": 1, "orientation": "landscape"},
-        headers={"Authorization": f"Client-ID {access_key}"},
-        timeout=30,
-    )
-    response.raise_for_status()
-    results = response.json().get("results", [])
-    if not results:
-        return None
-    photo = results[0]
+def _unsplash_photo_info(photo: dict, keyword: str) -> dict:
     user = photo.get("user") or {}
     return {
         "url": photo["urls"]["regular"],
@@ -1378,6 +1466,53 @@ def fetch_unsplash_photo(keyword: str) -> dict | None:
         "download_location": (photo.get("links") or {}).get("download_location"),
         "alt": photo.get("alt_description") or keyword,
     }
+
+
+def fetch_unsplash_photo(keyword: str, choose_for: str | None = None) -> dict | None:
+    """Unsplashから記事テーマに合う写真を1枚探す。キーがなければNoneを返す。
+
+    choose_forに記事タイトルを渡すと、検索結果の上位8枚の説明文を見て、
+    記事に最も合う1枚を軽量モデルに選ばせる(先頭の1枚は記事とずれていることがあるため)。
+    返り値: {"url", "photographer", "photographer_url", "download_location", "alt"}
+    """
+    access_key = os.environ.get("UNSPLASH_ACCESS_KEY")
+    if not access_key:
+        return None
+
+    response = requests.get(
+        "https://api.unsplash.com/search/photos",
+        params={"query": keyword, "per_page": 8 if choose_for else 1, "orientation": "landscape"},
+        headers={"Authorization": f"Client-ID {access_key}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    results = response.json().get("results", [])
+    if not results:
+        return None
+    if not choose_for or len(results) == 1:
+        return _unsplash_photo_info(results[0], keyword)
+
+    listing = "\n".join(
+        f"{i}: {p.get('alt_description') or ''} / {p.get('description') or ''}"[:200] for i, p in enumerate(results)
+    )
+    try:
+        _, data = _call_claude(
+            [{"role": "user", "content": (
+                f"ブログ記事「{choose_for}」のアイキャッチに使う写真を選びます。"
+                "写真の左側にはタイトル文字を重ねるので、記事のテーマ(おもちゃ・子ども・場所など)が"
+                "伝わる写真を1枚選んでください。記事と関係の薄い物(アクセサリー、無関係な外国の文字が目立つ物など)は避けること。\n"
+                f"{listing}\n"
+                '{"index": 番号} のJSONだけを返してください。'
+            )}],
+            max_tokens=100,
+            model=LIGHT_MODEL,
+        )
+        index = int(data.get("index", 0))
+    except Exception:
+        index = 0
+    if not 0 <= index < len(results):
+        index = 0
+    return _unsplash_photo_info(results[index], keyword)
 
 
 def unsplash_credit_html(photo: dict) -> str:
@@ -1416,6 +1551,23 @@ def build_unsplash_query(title: str, keyword: str) -> str:
         return keyword
 
 
+def split_title_lines(text: str, max_chars: int, max_lines: int) -> list | None:
+    """アイキャッチに載せるタイトルの改行位置を決める(単語の途中で区切らないよう軽量モデルに任せる)。"""
+    _, data = _call_claude(
+        [{"role": "user", "content": (
+            f"次の日本語のタイトルを、画像に載せるため{max_lines}行以内(できるだけ少ない行数)に分けてください。"
+            f"1行は全角{max_chars}文字以内を目安にし、単語の途中では絶対に区切らないこと"
+            "(「ぬいぐるみ」「おもちゃ」などを分断しない)。文字は一切変えないこと。\n"
+            f"タイトル: {text}\n"
+            '{"lines": ["1行目", "2行目"]} のJSONだけを返してください。'
+        )}],
+        max_tokens=300,
+        model=LIGHT_MODEL,
+    )
+    lines = [str(line) for line in (data.get("lines") or []) if line]
+    return lines if "".join(lines) == text else None
+
+
 def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) -> int | None:
     """Unsplashの写真をWordPressにアップロードしてアイキャッチ用のメディアIDを返す。
 
@@ -1423,7 +1575,9 @@ def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) 
     """
     query = build_unsplash_query(title, keyword)
     log(f"アイキャッチ画像をUnsplashで検索しています(検索語: {query})...")
-    photo = fetch_unsplash_photo(query) or (fetch_unsplash_photo(keyword) if query != keyword else None)
+    photo = fetch_unsplash_photo(query, choose_for=title) or (
+        fetch_unsplash_photo(keyword, choose_for=title) if query != keyword else None
+    )
     if not photo:
         log(f"Unsplashで「{keyword}」の写真が見つかりませんでした(アイキャッチなしで保存します)")
         return None
@@ -1440,7 +1594,15 @@ def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) 
 
     # ファイル名は英数字のみ使えるため、英語の検索語から作る(例: eyecatch-bath-toys-water-play)
     slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "photo"
-    media_id = upload_featured_image(photo["url"], f"eyecatch-{slug}")
+    image_response = requests.get(photo["url"], headers={"User-Agent": BROWSER_USER_AGENT}, timeout=60)
+    image_response.raise_for_status()
+    image_bytes = image_response.content
+    try:
+        # 写真の左側に白いパネルを重ね、記事タイトルを載せたアイキャッチにする
+        image_bytes = render_eyecatch(image_bytes, title, line_splitter=split_title_lines)
+    except Exception as exc:
+        log(f"アイキャッチへのタイトル合成に失敗しました(写真のみで設定します): {exc}")
+    media_id = upload_image_bytes_to_wp(image_bytes, f"eyecatch-{slug}.jpg", "image/jpeg")["id"]
     try:
         requests.post(
             f"{os.environ['WP_URL'].rstrip('/')}/wp-json/wp/v2/media/{media_id}",
@@ -1453,6 +1615,51 @@ def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) 
         log(f"アイキャッチ画像のクレジット表記の設定に失敗しました(メディアライブラリで手動設定してください): {exc}")
     log(f"アイキャッチ画像を設定しました(Photo by {photo['photographer']} on Unsplash)")
     return media_id
+
+
+def replace_featured_image(post_id: int, log=DEFAULT_LOG) -> dict:
+    """既存記事のアイキャッチだけを作り直して差し替える(本文・タイトル・公開状態・URLは変更しない)。
+
+    返り値: {"title", "link", "image_url"}
+    """
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    auth = (os.environ["WP_USERNAME"], os.environ["WP_APP_PASSWORD"])
+    post = requests.get(
+        f"{wp_url}/wp-json/wp/v2/posts/{post_id}",
+        auth=auth,
+        params={"context": "edit", "_fields": "id,title,link"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        timeout=30,
+    )
+    post.raise_for_status()
+    post = post.json()
+    title = html.unescape(post["title"].get("raw") or post["title"].get("rendered", ""))
+    log(f"「{title}」のアイキャッチを作り直しています...")
+
+    media_id = set_featured_image_from_unsplash(title, title, log=log)
+    if not media_id:
+        raise RuntimeError("記事に合う写真が見つからなかったため、アイキャッチを差し替えられませんでした")
+
+    response = requests.post(
+        f"{wp_url}/wp-json/wp/v2/posts/{post_id}",
+        auth=auth,
+        params={"_fields": "id,link,featured_media"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        json={"featured_media": media_id},
+        timeout=60,
+    )
+    if not response.ok:
+        raise RuntimeError(f"アイキャッチの差し替えに失敗しました (HTTP {response.status_code}): {response.text[:300]}")
+
+    media = requests.get(
+        f"{wp_url}/wp-json/wp/v2/media/{media_id}",
+        params={"_fields": "source_url"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        timeout=30,
+    )
+    image_url = media.json().get("source_url") if media.ok else None
+    log("アイキャッチを差し替えました(本文・公開状態は変更していません)")
+    return {"title": title, "link": response.json().get("link") or post.get("link"), "image_url": image_url}
 
 
 def upload_image_bytes_to_wp(image_bytes: bytes, filename: str, mime_type: str = "image/jpeg") -> dict:
@@ -1483,14 +1690,6 @@ def upload_image_bytes_to_wp(image_bytes: bytes, filename: str, mime_type: str =
         )
     media = response.json()
     return {"id": media.get("id"), "url": media.get("source_url")}
-
-
-def upload_featured_image(image_url: str, filename: str) -> int | None:
-    """画像URLをダウンロードしてWordPressメディアライブラリにアップロードし、メディアIDを返す。"""
-    image_response = requests.get(image_url, headers={"User-Agent": BROWSER_USER_AGENT}, timeout=60)
-    image_response.raise_for_status()
-    media = upload_image_bytes_to_wp(image_response.content, f"{filename}.jpg", "image/jpeg")
-    return media["id"]
 
 
 def generate_image_with_openai(prompt: str, size: str = "1024x1024") -> bytes:
@@ -1887,7 +2086,7 @@ def fix_article_with_feedback(content: str, issues: list, log=DEFAULT_LOG) -> st
     )
     prompt = f"""以下はおもちゃブログの記事本文(HTML)です。事実確認により、以下の指摘がありました。
 指摘された箇所のみを、修正の方向性に沿って書き換えてください。それ以外の文章・HTML構造・
-装飾(ふきだし・マーカー等)・プレースホルダー([[MID_CONVERSATION]]・[[PRODUCT:数字]]・[[PLACE:数字]])は
+装飾(ふきだし・マーカー等)・プレースホルダー([[MID_CONVERSATION]]・[[PRODUCT:数字]]・[[PLACE:数字]]・[[RELATED:数字]])は
 変更せずそのまま維持してください。
 
 ## 指摘事項
@@ -1990,6 +2189,12 @@ def finalize_and_publish(
             block = ""
         body = body.replace(placeholder, block, 1).replace(placeholder, "")
     body = re.sub(r"\[\[PLACE:\d+\]\]", "", body)
+
+    for i, post in enumerate(article.get("related_posts") or []):
+        placeholder = f"[[RELATED:{i}]]"
+        if placeholder in body:
+            body = body.replace(placeholder, build_related_post_card_html(post), 1).replace(placeholder, "")
+    body = re.sub(r"\[\[RELATED:\d+\]\]", "", body)
 
     product_html = ""
     amazon_keyword = article.get("amazon_search_keyword")
@@ -2126,7 +2331,9 @@ def run_pipeline_rewrite(
     categories = fetch_categories()
     existing = fetch_post_for_rewrite(post_id)
     log(f"「{existing['title']}」をリライトしています...")
-    article = generate_rewrite(existing["title"], existing["text"], categories, category=category, log=log)
+    article = generate_rewrite(
+        existing["title"], existing["text"], categories, category=category, log=log, exclude_post_id=post_id
+    )
     log(f"リライト後の記事タイトル: {article['title']}")
     return finalize_and_publish(
         article,
