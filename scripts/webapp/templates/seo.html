@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}SEO情報 | おもちゃミュージアム{% endblock %}
+{% block heading %}過去記事のSEO情報{% endblock %}
+{% block content %}
+
+{% if error %}
+<div class="card" style="color:#b91c1c;">記事一覧の取得に失敗しました: {{ error }}</div>
+{% endif %}
+
+{% if snippet_required %}
+<div class="card" style="max-width:820px;">
+  <p style="margin-top:0;"><strong>最初に1回だけ、WordPress側の設定が必要です。</strong></p>
+  <p style="font-size:0.88rem;color:#4b5563;">
+    CocoonのSEO欄(SEOタイトル・メタディスクリプション・メタキーワード)は、標準ではAPIから読み書きできません。
+    以下のコードスニペットを追加すると、このツールから未入力の記事を探して自動で書き込めるようになります。
+    記事の本文・URL・公開状態には影響しません。
+  </p>
+  <ol style="font-size:0.88rem;color:#4b5563;line-height:1.8;">
+    <li>WordPress管理画面 →「プラグイン」→「新規追加」で <strong>Code Snippets</strong> を検索してインストール・有効化</li>
+    <li>「スニペット」→「新規追加」を開き、タイトルを「Cocoon SEO欄のAPI公開」などにする</li>
+    <li>下のコードを貼り付け、実行場所は「どこでも実行(Run snippet everywhere)」のまま「変更を保存して有効化」</li>
+    <li>このページを再読み込み</li>
+  </ol>
+  <div style="position:relative;">
+    <button type="button" class="btn secondary" id="copySnippet" style="position:absolute;top:8px;right:8px;padding:4px 12px;font-size:0.8rem;">コピー</button>
+    <pre id="snippetCode" style="background:#111827;color:#e5e7eb;padding:16px;border-radius:8px;overflow-x:auto;font-size:0.8rem;line-height:1.5;">add_action( 'init', function () {
+    $keys = array( 'the_page_seo_title', 'the_page_meta_description', 'the_page_meta_keywords' );
+    foreach ( $keys as $key ) {
+        register_post_meta( 'post', $key, array(
+            'type'          => 'string',
+            'single'        => true,
+            'show_in_rest'  => true,
+            'auth_callback' => function () {
+                return current_user_can( 'edit_posts' );
+            },
+        ) );
+    }
+} );</pre>
+  </div>
+  <p style="font-size:0.8rem;color:#6b7280;">
+    ※ 「&lt;?php」の行は不要です(Code Snippetsが自動で付けます)。元に戻したいときはスニペットを無効化するだけでOKです。
+  </p>
+</div>
+<script>
+document.getElementById("copySnippet").addEventListener("click", function () {
+  navigator.clipboard.writeText(document.getElementById("snippetCode").textContent);
+  this.textContent = "コピーしました";
+});
+</script>
+
+{% elif not error %}
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+    <div style="font-size:0.9rem;">
+      SEO欄が未入力(一部含む)の記事: <strong>{{ missing_count }}件</strong>
+    </div>
+    <div style="font-size:0.85rem;">
+      {% if show_all %}
+      <a class="link" href="/seo">未入力の記事だけ表示</a>
+      {% else %}
+      <a class="link" href="/seo?all=1">すべての記事を表示</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if posts %}
+  <form action="/seo/generate" method="post">
+    <table>
+      <tr>
+        <th><input type="checkbox" id="checkAll" title="すべて選択"></th>
+        <th>タイトル</th><th>状態</th><th>SEOタイトル</th><th>ディスクリプション</th><th>キーワード</th>
+      </tr>
+      {% for p in posts %}
+      <tr>
+        <td><input type="checkbox" name="post_id" value="{{ p.id }}" class="post-check" {% if p.missing %}checked{% endif %}></td>
+        <td><a class="link" href="{{ p.link }}" target="_blank">{{ p.title }}</a></td>
+        <td>{{ p.status }}</td>
+        {% for field in ["seo_title", "meta_description", "keywords"] %}
+        <td>
+          {% if field in p.missing %}
+          <span class="badge ng">未入力</span>
+          {% else %}
+          <span class="badge ok" title="{{ p[field] }}">入力済み</span>
+          {% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+    <p style="color:#6b7280;font-size:0.82rem;margin-top:12px;">
+      選んだ記事の本文をもとにSEO情報を生成します。次の画面で内容を確認・編集してから書き込むので、この時点ではまだ記事は変更されません。
+      (目安: 1記事あたり約$0.01〜0.02)
+    </p>
+    <button type="submit" class="btn">選んだ記事のSEO情報を生成</button>
+  </form>
+  {% else %}
+  <div class="empty">SEO欄が未入力の記事はありません。</div>
+  {% endif %}
+</div>
+
+<script>
+const checkAll = document.getElementById("checkAll");
+if (checkAll) {
+  checkAll.addEventListener("change", function () {
+    document.querySelectorAll(".post-check").forEach(function (c) { c.checked = checkAll.checked; });
+  });
+}
+</script>
+{% endif %}
+
+{% endblock %}

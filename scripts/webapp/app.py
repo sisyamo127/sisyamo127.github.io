@@ -13,6 +13,8 @@
   /history                   生成履歴の一覧・検索
   /rewrite                   既存記事の選択 → リライト
   /rewrite/preview/<job_id>  リライト結果のプレビュー・上書き承認
+  /seo                       SEO欄が未入力の過去記事を選択 → SEO情報を生成
+  /seo/preview/<job_id>      生成したSEO情報の確認・編集 → CocoonのSEO欄に書き込み
   /status                    API連携状況の確認
 """
 
@@ -99,6 +101,11 @@ def load_history() -> list:
         return json.load(f)
 
 
+def is_article(entry: dict) -> bool:
+    """履歴のうち記事生成・リライトの記録か(SEO情報の再生成など費用記録のみのものを除く)。"""
+    return entry.get("type", "article") == "article"
+
+
 def save_history_entry(entry: dict) -> None:
     history = load_history()
     history.insert(0, entry)
@@ -156,7 +163,8 @@ def wants_json() -> bool:
 
 @app.route("/")
 def dashboard():
-    history = load_history()
+    all_history = load_history()
+    history = [h for h in all_history if is_article(h)]
     week_ago = datetime.now() - timedelta(days=7)
     this_week_count = sum(
         1 for h in history
@@ -165,11 +173,11 @@ def dashboard():
     success_count = sum(1 for h in history if h.get("wp_link"))
     error_count = sum(1 for h in history if not h.get("wp_link"))
     this_week_cost_usd = sum(
-        h.get("usage", {}).get("cost_usd", 0)
-        for h in history
+        (h.get("usage") or {}).get("cost_usd", 0)
+        for h in all_history
         if datetime.strptime(h["created_at"], "%Y-%m-%d %H:%M:%S") >= week_ago
     )
-    total_cost_usd = sum(h.get("usage", {}).get("cost_usd", 0) for h in history)
+    total_cost_usd = sum((h.get("usage") or {}).get("cost_usd", 0) for h in all_history)
     return render_template(
         "dashboard.html",
         active="home",
@@ -412,8 +420,9 @@ def approve_outline():
 
 @app.route("/history")
 def history_page():
-    history = load_history()
-    total_cost_usd = sum(h.get("usage", {}).get("cost_usd", 0) for h in history)
+    all_history = load_history()
+    history = [h for h in all_history if is_article(h)]
+    total_cost_usd = sum((h.get("usage") or {}).get("cost_usd", 0) for h in all_history)
     return render_template(
         "history.html", active="history", history=history, total_cost_usd=total_cost_usd
     )
@@ -510,6 +519,131 @@ def rewrite_confirm():
     return redirect(url_for("job_status", job_id=job_id))
 
 
+# --- SEO情報の再生成: 未入力の記事を選ぶ → 生成 → 確認・編集 → SEO欄に書き込み --
+
+@app.route("/seo")
+def seo_list():
+    show_all = request.args.get("all") == "1"
+    try:
+        posts = ga.fetch_posts_seo_status()
+    except ga.SeoMetaNotExposedError:
+        return render_template("seo.html", active="seo", posts=[], snippet_required=True, error=None, show_all=show_all, missing_count=0)
+    except Exception as exc:
+        return render_template("seo.html", active="seo", posts=[], snippet_required=False, error=str(exc), show_all=show_all, missing_count=0)
+
+    missing_count = sum(1 for p in posts if p["missing"])
+    if not show_all:
+        posts = [p for p in posts if p["missing"]]
+    return render_template(
+        "seo.html", active="seo", posts=posts, snippet_required=False, error=None,
+        show_all=show_all, missing_count=missing_count,
+    )
+
+
+@app.route("/seo/generate", methods=["POST"])
+def seo_generate():
+    post_ids = [int(i) for i in request.form.getlist("post_id") if i.isdigit()]
+    if not post_ids:
+        return redirect(url_for("seo_list"))
+
+    def task(log):
+        status_by_id = {p["id"]: p for p in ga.fetch_posts_seo_status()}
+        items = []
+        for n, post_id in enumerate(post_ids, 1):
+            current = status_by_id.get(post_id)
+            if current is None:
+                log(f"[{n}/{len(post_ids)}] 記事ID {post_id} が見つからないためスキップします")
+                continue
+            log(f"[{n}/{len(post_ids)}] 「{current['title']}」のSEO情報を生成しています...")
+            try:
+                post = ga.fetch_post_for_rewrite(post_id)
+                proposed = ga.generate_seo_fields(post["title"], post["text"], log=log)
+            except Exception as exc:
+                log(f"  生成に失敗しました: {exc}")
+                proposed = None
+            items.append({
+                "id": post_id,
+                "title": current["title"],
+                "link": current["link"],
+                "status": current["status"],
+                "missing": current["missing"],
+                "current": {f: current[f] for f in ga.COCOON_SEO_META_KEYS},
+                "proposed": proposed,
+            })
+        return {"items": items, "usage": ga.get_usage_summary()}
+
+    job_id = start_job(task)
+    return redirect(url_for("seo_preview", job_id=job_id))
+
+
+@app.route("/seo/preview/<job_id>")
+def seo_preview(job_id: str):
+    job = get_job(job_id)
+    if job is None:
+        abort(404)
+    return render_template(
+        "seo_preview.html", active="seo", job_id=job_id, max_title_chars=ga.SEO_TITLE_MAX_CHARS
+    )
+
+
+@app.route("/seo/apply", methods=["POST"])
+def seo_apply():
+    preview_job_id = request.form.get("job_id", "")
+    preview_job = get_job(preview_job_id)
+    if preview_job is None or preview_job.get("status") != "done":
+        abort(400)
+    titles = {item["id"]: item["title"] for item in preview_job["result"]["items"]}
+    generate_usage = preview_job["result"].get("usage")
+
+    targets = []
+    for post_id in titles:
+        if request.form.get(f"apply_{post_id}") != "on":
+            continue
+        targets.append({
+            "id": post_id,
+            "title": titles[post_id],
+            "seo_title": request.form.get(f"seo_title_{post_id}", "").strip(),
+            "meta_description": request.form.get(f"meta_description_{post_id}", "").strip(),
+            "keywords": request.form.get(f"keywords_{post_id}", "").strip(),
+        })
+
+    def task(log):
+        results = []
+        for n, t in enumerate(targets, 1):
+            try:
+                ga.update_post_seo_meta(t["id"], t["seo_title"], t["meta_description"], t["keywords"])
+                log(f"[{n}/{len(targets)}] 「{t['title']}」のSEO欄を更新しました")
+                results.append({**t, "ok": True, "error": None})
+            except Exception as exc:
+                log(f"[{n}/{len(targets)}] 「{t['title']}」の更新に失敗しました: {exc}")
+                results.append({**t, "ok": False, "error": str(exc)})
+
+        ok_count = sum(1 for r in results if r["ok"])
+        save_history_entry({
+            "id": preview_job_id,
+            "type": "seo",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "title": f"SEO情報の再生成({ok_count}/{len(results)}件を更新)",
+            "category": "",
+            "char_count": 0,
+            "wp_link": None,
+            "error": None if ok_count == len(results) else "一部の記事で更新に失敗しました",
+            "seo_results": results,
+            "usage": generate_usage,
+        })
+        return {"results": results}
+
+    job_id = start_job(task)
+    return redirect(url_for("seo_result", job_id=job_id))
+
+
+@app.route("/seo/result/<job_id>")
+def seo_result(job_id: str):
+    if get_job(job_id) is None:
+        abort(404)
+    return render_template("seo_result.html", active="seo", job_id=job_id)
+
+
 # --- API利用料 --------------------------------------------------------------
 
 @app.route("/usage")
@@ -520,7 +654,7 @@ def usage_page():
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     def cost_of(h: dict) -> float:
-        return h.get("usage", {}).get("cost_usd", 0)
+        return (h.get("usage") or {}).get("cost_usd", 0)
 
     def created_at(h: dict) -> datetime:
         return datetime.strptime(h["created_at"], "%Y-%m-%d %H:%M:%S")
@@ -528,19 +662,24 @@ def usage_page():
     total_cost_usd = sum(cost_of(h) for h in history)
     this_week_cost_usd = sum(cost_of(h) for h in history if created_at(h) >= week_ago)
     this_month_cost_usd = sum(cost_of(h) for h in history if created_at(h) >= month_start)
-    total_input_tokens = sum(h.get("usage", {}).get("input_tokens", 0) for h in history)
-    total_output_tokens = sum(h.get("usage", {}).get("output_tokens", 0) for h in history)
+    total_input_tokens = sum((h.get("usage") or {}).get("input_tokens", 0) for h in history)
+    total_output_tokens = sum((h.get("usage") or {}).get("output_tokens", 0) for h in history)
     tracked_count = sum(1 for h in history if h.get("usage"))
-    avg_cost_usd = (total_cost_usd / tracked_count) if tracked_count else 0
+    # 「1記事あたり」はSEO情報の再生成などを除いた記事生成・リライト分で計算する
+    tracked_articles = [h for h in history if h.get("usage") and is_article(h)]
+    avg_cost_usd = (
+        sum(cost_of(h) for h in tracked_articles) / len(tracked_articles) if tracked_articles else 0
+    )
 
-    # 月別の内訳(新しい月が上に来る順)
+    # 月別の内訳(新しい月が上に来る順)。件数は記事のみ、費用はすべて含める
     monthly = {}
     for h in history:
         if not h.get("usage"):
             continue
         key = created_at(h).strftime("%Y-%m")
         bucket = monthly.setdefault(key, {"month": key, "count": 0, "cost_usd": 0.0})
-        bucket["count"] += 1
+        if is_article(h):
+            bucket["count"] += 1
         bucket["cost_usd"] += cost_of(h)
     monthly_breakdown = sorted(monthly.values(), key=lambda b: b["month"], reverse=True)
 
@@ -594,6 +733,17 @@ def status_page():
             services.append({"name": "WordPress", "status": "ok", "detail": os.environ.get("WP_URL", "")})
         except Exception as exc:
             services.append({"name": "WordPress", "status": "ng", "detail": str(exc)})
+
+        try:
+            exposed = ga.seo_meta_exposed()
+            services.append({
+                "name": "CocoonのSEO欄(API書き込み)",
+                "status": "ok" if exposed else "warn",
+                "detail": "読み書き可能(記事保存時にSEO欄へ自動入力されます)" if exposed
+                else "未対応です。「SEO情報」ページの手順でスニペットを追加すると自動入力できます",
+            })
+        except Exception as exc:
+            services.append({"name": "CocoonのSEO欄(API書き込み)", "status": "ng", "detail": str(exc)})
     else:
         services.append({"name": "WordPress", "status": "warn", "detail": "WP_URL / WP_USERNAME / WP_APP_PASSWORDが未設定です"})
 
