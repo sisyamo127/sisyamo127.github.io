@@ -37,6 +37,8 @@ from datetime import datetime
 import requests
 from dotenv import load_dotenv
 
+from eyecatch import render_eyecatch
+
 load_dotenv()
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -1350,26 +1352,7 @@ def resolve_category_id(category_name: str, categories: list) -> int | None:
 UNSPLASH_UTM = "utm_source=omotya_museum_article_tool&utm_medium=referral"
 
 
-def fetch_unsplash_photo(keyword: str) -> dict | None:
-    """Unsplashから記事テーマに合う写真を1枚探す。キーがなければNoneを返す。
-
-    返り値: {"url", "photographer", "photographer_url", "download_location", "alt"}
-    """
-    access_key = os.environ.get("UNSPLASH_ACCESS_KEY")
-    if not access_key:
-        return None
-
-    response = requests.get(
-        "https://api.unsplash.com/search/photos",
-        params={"query": keyword, "per_page": 1, "orientation": "landscape"},
-        headers={"Authorization": f"Client-ID {access_key}"},
-        timeout=30,
-    )
-    response.raise_for_status()
-    results = response.json().get("results", [])
-    if not results:
-        return None
-    photo = results[0]
+def _unsplash_photo_info(photo: dict, keyword: str) -> dict:
     user = photo.get("user") or {}
     return {
         "url": photo["urls"]["regular"],
@@ -1378,6 +1361,53 @@ def fetch_unsplash_photo(keyword: str) -> dict | None:
         "download_location": (photo.get("links") or {}).get("download_location"),
         "alt": photo.get("alt_description") or keyword,
     }
+
+
+def fetch_unsplash_photo(keyword: str, choose_for: str | None = None) -> dict | None:
+    """Unsplashから記事テーマに合う写真を1枚探す。キーがなければNoneを返す。
+
+    choose_forに記事タイトルを渡すと、検索結果の上位8枚の説明文を見て、
+    記事に最も合う1枚を軽量モデルに選ばせる(先頭の1枚は記事とずれていることがあるため)。
+    返り値: {"url", "photographer", "photographer_url", "download_location", "alt"}
+    """
+    access_key = os.environ.get("UNSPLASH_ACCESS_KEY")
+    if not access_key:
+        return None
+
+    response = requests.get(
+        "https://api.unsplash.com/search/photos",
+        params={"query": keyword, "per_page": 8 if choose_for else 1, "orientation": "landscape"},
+        headers={"Authorization": f"Client-ID {access_key}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    results = response.json().get("results", [])
+    if not results:
+        return None
+    if not choose_for or len(results) == 1:
+        return _unsplash_photo_info(results[0], keyword)
+
+    listing = "\n".join(
+        f"{i}: {p.get('alt_description') or ''} / {p.get('description') or ''}"[:200] for i, p in enumerate(results)
+    )
+    try:
+        _, data = _call_claude(
+            [{"role": "user", "content": (
+                f"ブログ記事「{choose_for}」のアイキャッチに使う写真を選びます。"
+                "写真の左側にはタイトル文字を重ねるので、記事のテーマ(おもちゃ・子ども・場所など)が"
+                "伝わる写真を1枚選んでください。記事と関係の薄い物(アクセサリー、無関係な外国の文字が目立つ物など)は避けること。\n"
+                f"{listing}\n"
+                '{"index": 番号} のJSONだけを返してください。'
+            )}],
+            max_tokens=100,
+            model=LIGHT_MODEL,
+        )
+        index = int(data.get("index", 0))
+    except Exception:
+        index = 0
+    if not 0 <= index < len(results):
+        index = 0
+    return _unsplash_photo_info(results[index], keyword)
 
 
 def unsplash_credit_html(photo: dict) -> str:
@@ -1416,6 +1446,23 @@ def build_unsplash_query(title: str, keyword: str) -> str:
         return keyword
 
 
+def split_title_lines(text: str, max_chars: int, max_lines: int) -> list | None:
+    """アイキャッチに載せるタイトルの改行位置を決める(単語の途中で区切らないよう軽量モデルに任せる)。"""
+    _, data = _call_claude(
+        [{"role": "user", "content": (
+            f"次の日本語のタイトルを、画像に載せるため{max_lines}行以内(できるだけ少ない行数)に分けてください。"
+            f"1行は全角{max_chars}文字以内を目安にし、単語の途中では絶対に区切らないこと"
+            "(「ぬいぐるみ」「おもちゃ」などを分断しない)。文字は一切変えないこと。\n"
+            f"タイトル: {text}\n"
+            '{"lines": ["1行目", "2行目"]} のJSONだけを返してください。'
+        )}],
+        max_tokens=300,
+        model=LIGHT_MODEL,
+    )
+    lines = [str(line) for line in (data.get("lines") or []) if line]
+    return lines if "".join(lines) == text else None
+
+
 def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) -> int | None:
     """Unsplashの写真をWordPressにアップロードしてアイキャッチ用のメディアIDを返す。
 
@@ -1423,7 +1470,9 @@ def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) 
     """
     query = build_unsplash_query(title, keyword)
     log(f"アイキャッチ画像をUnsplashで検索しています(検索語: {query})...")
-    photo = fetch_unsplash_photo(query) or (fetch_unsplash_photo(keyword) if query != keyword else None)
+    photo = fetch_unsplash_photo(query, choose_for=title) or (
+        fetch_unsplash_photo(keyword, choose_for=title) if query != keyword else None
+    )
     if not photo:
         log(f"Unsplashで「{keyword}」の写真が見つかりませんでした(アイキャッチなしで保存します)")
         return None
@@ -1440,7 +1489,15 @@ def set_featured_image_from_unsplash(keyword: str, title: str, log=DEFAULT_LOG) 
 
     # ファイル名は英数字のみ使えるため、英語の検索語から作る(例: eyecatch-bath-toys-water-play)
     slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "photo"
-    media_id = upload_featured_image(photo["url"], f"eyecatch-{slug}")
+    image_response = requests.get(photo["url"], headers={"User-Agent": BROWSER_USER_AGENT}, timeout=60)
+    image_response.raise_for_status()
+    image_bytes = image_response.content
+    try:
+        # 写真の左側に白いパネルを重ね、記事タイトルを載せたアイキャッチにする
+        image_bytes = render_eyecatch(image_bytes, title, line_splitter=split_title_lines)
+    except Exception as exc:
+        log(f"アイキャッチへのタイトル合成に失敗しました(写真のみで設定します): {exc}")
+    media_id = upload_image_bytes_to_wp(image_bytes, f"eyecatch-{slug}.jpg", "image/jpeg")["id"]
     try:
         requests.post(
             f"{os.environ['WP_URL'].rstrip('/')}/wp-json/wp/v2/media/{media_id}",
@@ -1483,14 +1540,6 @@ def upload_image_bytes_to_wp(image_bytes: bytes, filename: str, mime_type: str =
         )
     media = response.json()
     return {"id": media.get("id"), "url": media.get("source_url")}
-
-
-def upload_featured_image(image_url: str, filename: str) -> int | None:
-    """画像URLをダウンロードしてWordPressメディアライブラリにアップロードし、メディアIDを返す。"""
-    image_response = requests.get(image_url, headers={"User-Agent": BROWSER_USER_AGENT}, timeout=60)
-    image_response.raise_for_status()
-    media = upload_image_bytes_to_wp(image_response.content, f"{filename}.jpg", "image/jpeg")
-    return media["id"]
 
 
 def generate_image_with_openai(prompt: str, size: str = "1024x1024") -> bytes:
