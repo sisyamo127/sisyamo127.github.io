@@ -138,6 +138,20 @@ async function poll() {
   if (data.status === "done") {
     statusEl.textContent = "状態: 完了";
     const r = data.result;
+    if (r.mode === "eyecatch") {
+      let eyecatchHtml = `<p><strong>${r.title}</strong> のアイキャッチ画像を${r.error ? "差し替えられませんでした" : "差し替えました"}(本文・公開状態は変更していません)。</p>`;
+      if (r.image_url) {
+        eyecatchHtml += `<img src="${r.image_url}" alt="" style="max-width:100%;border-radius:8px;border:1px solid #e5e7eb;">`;
+      }
+      if (r.wp_link) {
+        eyecatchHtml += `<p><a class="link" href="${r.wp_link}" target="_blank">記事を開く</a></p>`;
+      }
+      if (r.error) {
+        eyecatchHtml += `<p style="color:#c00;">${r.error}</p>`;
+      }
+      resultEl.innerHTML = eyecatchHtml;
+      return;
+    }
     let html = `<p><strong>${r.title}</strong>(カテゴリー: ${r.category} / ${r.char_count}文字)</p>`;
     if (r.wp_link) {
       html += `<p><a class="link" href="${r.wp_link}" target="_blank">WordPressの下書きを開く</a></p>`;
