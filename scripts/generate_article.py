@@ -1076,6 +1076,179 @@ def fetch_post_for_rewrite(post_id: int) -> dict:
     return {"id": data["id"], "title": data["title"]["rendered"], "text": text}
 
 
+# ---------------------------------------------------------------------------
+# CocoonのSEO欄(SEOタイトル・メタディスクリプション・メタキーワード)
+# ---------------------------------------------------------------------------
+# Cocoonはこれらをpost metaに保存するが、標準ではREST APIに公開していない。
+# WordPress側でregister_post_meta(show_in_rest=true)するスニペットを追加して
+# 初めて読み書きできる(未登録のmetaキーはREST APIが黙って無視する)。
+
+COCOON_SEO_META_KEYS = {
+    "seo_title": "the_page_seo_title",
+    "meta_description": "the_page_meta_description",
+    "keywords": "the_page_meta_keywords",
+}
+
+SEO_TITLE_MAX_CHARS = 32
+META_DESCRIPTION_MIN_CHARS = 90
+
+
+class SeoMetaNotExposedError(RuntimeError):
+    """CocoonのSEO用post metaがREST APIに公開されていない(スニペット未導入)。"""
+
+
+def _keywords_to_str(keywords) -> str:
+    if isinstance(keywords, str):
+        return keywords.strip()
+    return ",".join(k.strip() for k in (keywords or []) if k and k.strip())
+
+
+def seo_meta_exposed() -> bool:
+    """CocoonのSEO欄がREST APIで読み書きできる状態か(スニペット導入済みか)を確認する。"""
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    response = requests.get(
+        f"{wp_url}/wp-json/wp/v2/posts",
+        auth=(os.environ["WP_USERNAME"], os.environ["WP_APP_PASSWORD"]),
+        params={"per_page": 1, "context": "edit", "_fields": "meta"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        timeout=30,
+    )
+    response.raise_for_status()
+    posts = response.json()
+    if not posts:
+        return False
+    meta = posts[0].get("meta") or {}
+    return isinstance(meta, dict) and COCOON_SEO_META_KEYS["seo_title"] in meta
+
+
+def fetch_posts_seo_status() -> list:
+    """全記事(公開・下書き等)のCocoon SEO欄の入力状況を取得する。
+
+    各要素: id, title, link, status, date, seo_title, meta_description, keywords, missing(未入力の項目名リスト)
+    """
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    auth = (os.environ["WP_USERNAME"], os.environ["WP_APP_PASSWORD"])
+
+    posts = []
+    page = 1
+    while True:
+        response = requests.get(
+            f"{wp_url}/wp-json/wp/v2/posts",
+            auth=auth,
+            params={
+                "per_page": 100,
+                "page": page,
+                "status": "publish,draft,future,pending,private",
+                "context": "edit",
+                "_fields": "id,title,link,status,date,meta",
+            },
+            headers={"User-Agent": BROWSER_USER_AGENT},
+            timeout=30,
+        )
+        response.raise_for_status()
+        batch = response.json()
+        for p in batch:
+            meta = p.get("meta") or {}
+            if not isinstance(meta, dict) or COCOON_SEO_META_KEYS["seo_title"] not in meta:
+                raise SeoMetaNotExposedError(
+                    "CocoonのSEO欄がREST APIに公開されていません。"
+                    "WordPressにSEO欄公開用のコードスニペットを追加してください。"
+                )
+            entry = {
+                "id": p["id"],
+                "title": p["title"]["raw"] if isinstance(p["title"], dict) and "raw" in p["title"] else p["title"]["rendered"],
+                "link": p["link"],
+                "status": p["status"],
+                "date": p.get("date", ""),
+            }
+            for field, key in COCOON_SEO_META_KEYS.items():
+                entry[field] = (meta.get(key) or "").strip()
+            entry["missing"] = [f for f in COCOON_SEO_META_KEYS if not entry[f]]
+            posts.append(entry)
+
+        total_pages = int(response.headers.get("X-WP-TotalPages", "1") or 1)
+        if page >= total_pages or not batch:
+            break
+        page += 1
+
+    return posts
+
+
+def generate_seo_fields(title: str, text: str, log=DEFAULT_LOG) -> dict:
+    """既存記事のタイトル・本文から、CocoonのSEO欄に入れる3項目を生成する。"""
+    excerpt = text[:4000]
+    prompt = f"""あなたはSEOの専門家です。以下のブログ記事(おもちゃ専門ブログ「おもちゃミュージアム」)について、
+検索エンジン向けのSEO情報を作成してください。記事の内容に書かれていないことは書かないでください。
+
+## 記事タイトル
+{title}
+
+## 記事本文(冒頭抜粋、HTMLタグ除去済み)
+{excerpt}
+
+## 作成するもの
+- seo_title: 検索結果に表示するタイトル。全角{SEO_TITLE_MAX_CHARS}文字以内厳守。主要キーワードをなるべく前半に入れる。
+  記事タイトルが条件を満たしていればほぼそのままでもよい。「絶対」「100%」など誇大な表現は使わない
+- meta_description: 検索結果に表示する説明文。必ず{META_DESCRIPTION_MIN_CHARS}〜120文字にする。主要キーワードを含め、
+  記事を読むと何が分かるか・誰の役に立つかを具体的に書く
+- keywords: 記事に関連する検索キーワードを3〜5個
+
+必ず次のJSON形式のみで返してください。他の文章は含めないこと。
+{{"seo_title": "...", "meta_description": "...", "keywords": ["...", "..."]}}
+"""
+    messages = [{"role": "user", "content": prompt}]
+    raw_text, data = _call_claude(messages, max_tokens=4000)
+
+    desc_len = len((data.get("meta_description") or "").strip())
+    if desc_len < META_DESCRIPTION_MIN_CHARS:
+        log(f"  メタディスクリプションが{desc_len}文字と短いため、書き直しを依頼します...")
+        messages += [
+            {"role": "assistant", "content": raw_text},
+            {"role": "user", "content": (
+                f"meta_descriptionが{desc_len}文字しかありません。{META_DESCRIPTION_MIN_CHARS}〜120文字になるよう、"
+                "記事の内容に沿って具体的に書き足してください。同じJSON形式で全項目を出力し直してください。"
+            )},
+        ]
+        _, data = _call_claude(messages, max_tokens=4000)
+
+    return {
+        "seo_title": (data.get("seo_title") or "").strip(),
+        "meta_description": (data.get("meta_description") or "").strip(),
+        "keywords": _keywords_to_str(data.get("keywords")),
+    }
+
+
+def update_post_seo_meta(post_id: int, seo_title: str, meta_description: str, keywords) -> None:
+    """CocoonのSEO欄だけを更新する(本文・タイトル・公開状態・URLは変更しない)。"""
+    wp_url = os.environ["WP_URL"].rstrip("/")
+    auth = (os.environ["WP_USERNAME"], os.environ["WP_APP_PASSWORD"])
+
+    meta = {
+        COCOON_SEO_META_KEYS["seo_title"]: (seo_title or "").strip(),
+        COCOON_SEO_META_KEYS["meta_description"]: (meta_description or "").strip(),
+        COCOON_SEO_META_KEYS["keywords"]: _keywords_to_str(keywords),
+    }
+    response = requests.post(
+        f"{wp_url}/wp-json/wp/v2/posts/{post_id}",
+        auth=auth,
+        params={"context": "edit", "_fields": "id,meta"},
+        headers={"User-Agent": BROWSER_USER_AGENT},
+        json={"meta": meta},
+        timeout=60,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"SEO情報の更新に失敗しました (HTTP {response.status_code}): {response.text}"
+        )
+    saved = response.json().get("meta") or {}
+    # 未登録のmetaキーはエラーにならず無視されるため、反映されたかを確認する
+    if not isinstance(saved, dict) or COCOON_SEO_META_KEYS["seo_title"] not in saved:
+        raise SeoMetaNotExposedError("CocoonのSEO欄がREST APIに公開されていません")
+    for key, value in meta.items():
+        if (saved.get(key) or "").strip() != value:
+            raise RuntimeError(f"SEO情報が反映されませんでした({key})")
+
+
 ARTICLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "articles")
 
 
@@ -1289,6 +1462,17 @@ def finalize_and_publish(
     except Exception as exc:
         log(f"WordPressへの保存に失敗しました(ローカル保存のみ完了): {exc}")
         result["error"] = str(exc)
+
+    if result["post_id"]:
+        try:
+            update_post_seo_meta(
+                result["post_id"], result["seo_title"], result["meta_description"], result["keywords"]
+            )
+            log("CocoonのSEO欄(SEOタイトル・メタディスクリプション・メタキーワード)にも書き込みました")
+        except SeoMetaNotExposedError:
+            log("CocoonのSEO欄はAPIから書き込めない設定のため、SEO情報は手動でコピペしてください")
+        except Exception as exc:
+            log(f"CocoonのSEO欄への書き込みに失敗しました(記事自体は保存済み): {exc}")
 
     filepath = save_article_locally(article, full_content)
     log(f"記事をローカルに保存しました: {filepath}")

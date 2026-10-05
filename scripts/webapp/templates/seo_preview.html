@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}SEO情報の確認 | おもちゃミュージアム{% endblock %}
+{% block heading %}SEO情報の確認・編集{% endblock %}
+{% block content %}
+
+<div class="card" style="max-width:900px;">
+  <p id="status">SEO情報を生成中...</p>
+  <div id="logs" style="background:#111;color:#0f0;padding:16px;border-radius:8px;min-height:60px;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:monospace;font-size:0.8rem;"></div>
+  <form id="applyForm" action="/seo/apply" method="post" style="display:none;margin-top:16px;">
+    <input type="hidden" name="job_id" value="{{ job_id }}">
+    <p style="color:#6b7280;font-size:0.82rem;margin-top:0;">
+      すでに入力されている項目は既存の値のまま、未入力の項目にはAIの案を入れています。自由に書き換えてから保存してください。
+      チェックを外した記事は変更されません。
+    </p>
+    <div id="items"></div>
+    <div id="usage"></div>
+    <button type="submit" class="btn" style="margin-top:12px;">チェックした記事のSEO欄に書き込む &raquo;</button>
+  </form>
+  <a class="link" href="/seo" style="display:inline-block;margin-top:16px;">&laquo; 記事選択に戻る</a>
+</div>
+
+<style>
+  .seo-item { border:1px solid #e5e7eb; border-radius:8px; padding:14px; margin-bottom:12px; }
+  .seo-item textarea { width:100%; padding:9px 10px; margin-top:5px; border:1px solid var(--border); border-radius:6px; font-size:0.9rem; font-family:inherit; resize:vertical; }
+  .seo-item label { margin-top:10px; }
+  .counter { font-weight:normal; color:#6b7280; font-size:0.8rem; margin-left:6px; }
+  .counter.over { color:#b91c1c; font-weight:bold; }
+  .ai-hint { font-size:0.8rem; color:#6b7280; margin-top:4px; }
+</style>
+
+<script>
+const jobId = "{{ job_id }}";
+const MAX_TITLE = {{ max_title_chars }};
+const FIELDS = [
+  { key: "seo_title", label: "SEOタイトル", textarea: false, hint: "32文字以内が目安", max: MAX_TITLE },
+  { key: "meta_description", label: "メタディスクリプション", textarea: true, hint: "120文字前後が目安", max: null },
+  { key: "keywords", label: "メタキーワード(カンマ区切り)", textarea: false, hint: "", max: null },
+];
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s || "";
+  return div.innerHTML;
+}
+
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function renderItems(items) {
+  const container = document.getElementById("items");
+  let html = "";
+  items.forEach(function (item) {
+    const proposed = item.proposed || {};
+    html += `<div class="seo-item">
+      <label style="margin:0;display:flex;gap:8px;align-items:center;">
+        <input type="checkbox" name="apply_${item.id}" ${item.proposed ? "checked" : ""}>
+        <a class="link" href="${escapeAttr(item.link)}" target="_blank">${escapeHtml(item.title)}</a>
+        <span style="color:#6b7280;font-weight:normal;font-size:0.8rem;">(${escapeHtml(item.status)})</span>
+      </label>`;
+    if (!item.proposed) {
+      html += `<p style="color:#b91c1c;font-size:0.82rem;">AIの案を生成できませんでした。手入力する場合はチェックを入れて入力してください。</p>`;
+    }
+    FIELDS.forEach(function (f) {
+      const existing = item.current[f.key] || "";
+      const value = existing || proposed[f.key] || "";
+      const name = `${f.key}_${item.id}`;
+      const input = f.textarea
+        ? `<textarea name="${name}" rows="3" data-max="${f.max || ""}">${escapeHtml(value)}</textarea>`
+        : `<input type="text" name="${name}" value="${escapeAttr(value)}" data-max="${f.max || ""}">`;
+      let hint = "";
+      if (existing && proposed[f.key] && proposed[f.key] !== existing) {
+        hint = `<div class="ai-hint">既存の値です。AIの案: 「${escapeHtml(proposed[f.key])}」
+          <a href="#" class="link use-ai" data-target="${name}" data-value="${escapeAttr(proposed[f.key])}">AIの案を使う</a></div>`;
+      }
+      html += `<label>${f.label}<span class="counter" data-for="${name}"></span>
+        <span style="font-weight:normal;color:#9ca3af;font-size:0.78rem;">${f.hint}</span></label>${input}${hint}`;
+    });
+    html += "</div>";
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll("input[type=text], textarea").forEach(function (el) {
+    el.addEventListener("input", function () { updateCounter(el); });
+    updateCounter(el);
+  });
+  container.querySelectorAll(".use-ai").forEach(function (a) {
+    a.addEventListener("click", function (e) {
+      e.preventDefault();
+      const el = container.querySelector(`[name="${a.dataset.target}"]`);
+      el.value = a.dataset.value;
+      updateCounter(el);
+    });
+  });
+}
+
+function updateCounter(el) {
+  const counter = document.querySelector(`.counter[data-for="${el.name}"]`);
+  if (!counter) return;
+  const len = [...el.value].length;
+  const max = Number(el.dataset.max) || 0;
+  counter.textContent = `${len}文字`;
+  counter.classList.toggle("over", max > 0 && len > max);
+}
+
+async function poll() {
+  const res = await fetch(`/jobs/${jobId}/data`);
+  const data = await res.json();
+  const logsEl = document.getElementById("logs");
+  logsEl.textContent = data.logs.join("\n");
+  logsEl.scrollTop = logsEl.scrollHeight;
+
+  if (data.status === "done") {
+    document.getElementById("status").textContent = "生成が完了しました。内容を確認してください。";
+    renderItems(data.result.items);
+    const u = data.result.usage;
+    if (u) {
+      document.getElementById("usage").innerHTML = `<p style="color:#6b7280;font-size:0.78rem;">API利用量: 入力${u.input_tokens.toLocaleString()}トークン / 出力${u.output_tokens.toLocaleString()}トークン(概算費用 $${u.cost_usd.toFixed(4)})</p>`;
+    }
+    document.getElementById("applyForm").style.display = "block";
+    return;
+  }
+  if (data.status === "error") {
+    document.getElementById("status").innerHTML = `<span style="color:#c00;">エラーが発生しました: ${escapeHtml(data.error)}</span>`;
+    return;
+  }
+  setTimeout(poll, 2000);
+}
+poll();
+</script>
+
+{% endblock %}
