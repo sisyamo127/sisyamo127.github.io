@@ -211,18 +211,24 @@ def build_article_prompt(
 MIN_CONTENT_CHARS = 5000
 
 
+MAX_PAUSE_TURN_CONTINUATIONS = 5
+
+
 def _call_claude(
     messages: list,
     tools: list | None = None,
     max_tokens: int = 12000,
     system: str | None = None,
     model: str | None = None,
+    effort: str | None = None,
 ) -> tuple[str, dict]:
     """Claudeを呼び出し、(テキスト全文, パース済みJSON)を返す。
 
     toolsを渡すとサーバーサイドツール(Web検索など)を有効にできる。その場合、
     途中でtool_use/tool_resultのブロックが挟まるため、最後のtextブロックを
-    最終回答として採用する。
+    最終回答として採用する。Web検索が長引くとAPIが途中で区切って
+    stop_reason="pause_turn"を返すので、その場合は同じターンを続けさせる。
+    effort("low"等)を下げると、検索回数や考える量が減って速く・安くなる。
     """
     api_key = os.environ["ANTHROPIC_API_KEY"]
     model = model or os.environ.get("ANTHROPIC_MODEL", DEFAULT_MODEL)
@@ -230,45 +236,59 @@ def _call_claude(
     payload = {
         "model": model,
         "max_tokens": max_tokens,
-        "messages": messages,
+        "messages": list(messages),
     }
     if tools:
         payload["tools"] = tools
     if system:
         payload["system"] = system
+    if effort:
+        payload["output_config"] = {"effort": effort}
 
-    response = requests.post(
-        ANTHROPIC_API_URL,
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": ANTHROPIC_API_VERSION,
-            "content-type": "application/json",
-        },
-        json=payload,
-        timeout=180,
-    )
-    if not response.ok:
-        # 「400 Bad Request」だけでは原因が分からないため、APIが返したエラー内容を表示する
-        try:
-            message = response.json().get("error", {}).get("message", response.text)
-        except ValueError:
-            message = response.text
-        if "credit balance" in message:
-            message = (
-                "Anthropic APIのクレジット残高が不足しています。"
-                "console.anthropic.com の Plans & Billing でクレジットを追加してください。"
-            )
-        raise RuntimeError(f"Claude APIエラー (HTTP {response.status_code}): {message[:300]}")
-    data = response.json()
+    content_blocks = []
+    for _ in range(MAX_PAUSE_TURN_CONTINUATIONS + 1):
+        response = requests.post(
+            ANTHROPIC_API_URL,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": ANTHROPIC_API_VERSION,
+                "content-type": "application/json",
+            },
+            json=payload,
+            # Web検索などのツールを使う呼び出しは数分かかることがあるため、待ち時間を長くとる
+            timeout=600 if tools else 180,
+        )
+        if not response.ok:
+            # 「400 Bad Request」だけでは原因が分からないため、APIが返したエラー内容を表示する
+            try:
+                message = response.json().get("error", {}).get("message", response.text)
+            except ValueError:
+                message = response.text
+            if "credit balance" in message:
+                message = (
+                    "Anthropic APIのクレジット残高が不足しています。"
+                    "console.anthropic.com の Plans & Billing でクレジットを追加してください。"
+                )
+            raise RuntimeError(f"Claude APIエラー (HTTP {response.status_code}): {message[:300]}")
+        data = response.json()
 
-    usage = data.get("usage", {})
-    _usage.input_tokens += usage.get("input_tokens", 0)
-    _usage.output_tokens += usage.get("output_tokens", 0)
+        usage = data.get("usage", {})
+        _usage.input_tokens += usage.get("input_tokens", 0)
+        _usage.output_tokens += usage.get("output_tokens", 0)
 
-    content_blocks = data["content"]
+        content_blocks = data["content"]
+        if data.get("stop_reason") != "pause_turn":
+            break
+        # 途中で区切られたターンは、そこまでの内容をassistantとして送り返すと続きから再開される
+        payload["messages"] = payload["messages"] + [{"role": "assistant", "content": content_blocks}]
+
     text_blocks = [block for block in content_blocks if block.get("type") == "text"]
     if not text_blocks:
-        raise ValueError(f"テキスト形式のレスポンスが見つかりませんでした: {content_blocks}")
+        block_types = [b.get("type") for b in content_blocks]
+        raise ValueError(
+            f"テキスト形式のレスポンスが見つかりませんでした(stop_reason={data.get('stop_reason')}, "
+            f"ブロック: {block_types[:10]})。max_tokensが不足している可能性があります"
+        )
     # ツール使用時は複数のtextブロックが挟まるため、最後(最終回答)を採用する
     text = text_blocks[-1]["text"].strip()
 
@@ -473,6 +493,7 @@ def research_topic(title: str, target_keyword: str, log=DEFAULT_LOG) -> str:
 Web検索を使って、この記事に関連する実在の情報(店舗名・場所、ブランドの産地/発祥地、
 具体的な商品名、価格帯、発売時期など)を調べてください。不確かな情報は含めないこと。
 分からなかった項目は無理に埋めず省略してください。
+{SEARCH_LIMIT_NOTE}
 記事に駅・空港・商業施設・店舗が出てくる場合は、その公式サイトのフロアマップ(構内図・館内マップ)の
 ページや店舗案内ページのURLも、実際に見つかったものだけ記載してください(推測でURLを作らないこと)。
 
@@ -480,7 +501,7 @@ Web検索を使って、この記事に関連する実在の情報(店舗名・�
 
 {{"facts": "調べて分かった事実の箇条書き(- 形式)。特になければ空文字列"}}
 """
-    _, data = _call_claude([{"role": "user", "content": prompt}], tools=WEB_SEARCH_TOOL, max_tokens=2000)
+    _, data = _call_claude([{"role": "user", "content": prompt}], tools=WEB_SEARCH_TOOL, max_tokens=8000, effort="medium")
     facts = data.get("facts", "").strip()
     if facts:
         log("事前調査で関連情報を確認しました。")
@@ -495,6 +516,8 @@ PRODUCT_AND_PLACE_PLAN_INSTRUCTIONS = """## 記事内で紹介する商品(最�
 本文で具体的な商品を紹介する箇所をすべて洗い出し、product_mentionsに挙げてください(最大6個、同じ商品の重複なし)。
 ここに挙げた商品は、本文を書く前に楽天市場で実在の商品に置き換え、その商品を本文で紹介します。
 本文で具体的な商品名を出すのはここに挙げた商品だけになるので、紹介したい商品は漏れなく挙げてください。
+ただし駅・空港・店舗の限定品は通販では買えないことが多いため、ここには通販で買える商品を挙げ、
+限定品や店舗の情報は(事前調査で確認できたものだけ)outlineの概要に書いてください。
 - heading: 紹介する箇所の見出し(outlineのheadingと同じ文字列にすること)
 - name: 紹介する商品の種類(例:「木製の型はめパズル」「お風呂で遊べる水鉄砲」)
 - search_keyword: 楽天市場で検索するための具体的なキーワード(日本語、2〜4語。ブランド名・商品名が決まっていればそれを含める)
@@ -640,6 +663,7 @@ def build_content_prompt_from_outline(outline: dict, reference_text: str | None 
                 price = f"{item['price']:,}円(税込)" if item.get("price") else "不明"
                 product_blocks.append(
                     f"[[PRODUCT:{i}]] 見出し「{p['heading']}」で紹介する実在の商品\n"
+                    f"  商品カードでの表示名: {item['name']}\n"
                     f"  販売ページの商品名: {item.get('full_name', item['name'])}\n"
                     f"  価格: {price} / ショップ: {item.get('shop', '')} / レビュー: {item.get('review_count', 0)}件\n"
                     f"  商品説明(抜粋): {item.get('caption') or 'なし'}"
@@ -653,11 +677,15 @@ def build_content_prompt_from_outline(outline: dict, reference_text: str | None 
 ## 紹介する商品と商品カードのプレースホルダー(重要)
 以下の商品を本文で紹介し、それぞれ本文で最初に触れた直後にプレースホルダー(例: [[PRODUCT:0]])を1回だけ挿入してください。
 プレースホルダーは後で画像付きの商品カードに置き換えるので、他の文章とは改行で区切ること。
-- 販売ページの商品名は検索用のキーワードが並んでいるので、そのまま書かず、読者に分かる自然な呼び方にすること
-  (例:「はぐラブの木製ペグパズル」「恐竜や乗り物の型はめパズル2点セット」。ブランド名・ショップ名があれば添える)
+- 商品は「商品カードでの表示名」で呼ぶこと(本文とカードで名前をそろえるため。販売ページの商品名は検索用の
+  キーワードが並んでいるので、そのまま書かない)
 - 特徴・仕様は販売ページの商品名と商品説明に書かれている範囲で書くこと(書かれていない機能・素材・対象年齢などを作らない)
 - 価格は「◯円前後」程度にとどめること(変動するため)
-- ここに挙げた商品以外に、具体的なブランド名・商品名を出さないこと(一般的な種類の話はしてよい)
+- ここに挙げた商品以外に、具体的なブランド名・商品名を出さないこと(一般的な種類の話はしてよい)。
+  例外として、構成案の概要に書かれている店舗名・限定品名は使ってよい(事前調査で確認済みのため)
+- これらは楽天市場(通販)で見つけた商品です。駅・空港・店舗の売り場で売っているとは書かないこと
+  (店頭での取り扱いは確認できていないため)。「通販でも手に入る」「事前にネットで用意しておける」
+  「似たタイプとして」など、通販の商品であることが分かる紹介のしかたにすること
 
 {chr(10).join(product_blocks)}
 """
@@ -1134,12 +1162,42 @@ def resolve_product_mentions(mentions: list, log=DEFAULT_LOG) -> list:
                         break
             except Exception as exc:
                 log(f"商品「{mention.get('name', '')}」の楽天検索に失敗しました: {exc}")
+        resolved.append(mention)
+
+    _add_display_names([m["item"] for m in resolved if m["item"]])
+    for mention in resolved:
         if mention["item"]:
             log(f"紹介する商品を確定: {mention.get('name', '')} → {mention['item']['name']}")
         else:
             log(f"商品「{mention.get('name', '')}」は楽天で見つからなかったため、種類の紹介にとどめます")
-        resolved.append(mention)
     return resolved
+
+
+def _add_display_names(items: list) -> None:
+    """楽天の商品名(検索用キーワードの羅列)を、読者向けの短い名前に置き換える(1回の軽量モデル呼び出し)。"""
+    if not items:
+        return
+    listing = "\n".join(f"{i}: {it.get('full_name') or it['name']} / ショップ: {it.get('shop', '')}" for i, it in enumerate(items))
+    try:
+        _, data = _call_claude(
+            [{"role": "user", "content": (
+                "以下は楽天市場の商品名です。検索用のキーワードが並んでいて読みにくいので、ブログの商品カードに載せる"
+                "短く自然な日本語の商品名(全角25文字以内)にしてください。ブランド名があれば先頭に入れ、"
+                "セール・クーポン・ポイント・送料・出産祝いなどの宣伝文句や用途の羅列は除くこと。"
+                "商品名にない特徴を付け足さないこと。\n"
+                f"{listing}\n"
+                '{"names": ["0番の名前", "1番の名前", ...]} のJSONだけを返してください。'
+            )}],
+            max_tokens=800,
+            model=LIGHT_MODEL,
+        )
+        names = data.get("names") or []
+    except Exception:
+        return
+    for item, name in zip(items, names):
+        name = (name or "").strip()
+        if name:
+            item["name"] = name[:30]
 
 
 # ---------------------------------------------------------------------------
@@ -1776,7 +1834,12 @@ def save_article_locally(article: dict, full_content: str) -> str:
     return filepath
 
 
-WEB_SEARCH_TOOL = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 5}]
+# 動的フィルタリング版のWeb検索は1回の処理で複数の検索をまとめて行うため、上限が小さいとすぐ使い切る
+WEB_SEARCH_TOOL = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 10}]
+SEARCH_LIMIT_NOTE = (
+    "Web検索には回数の上限があります。上限に達したら追加の検索はせず、それまでに検索で確認できた"
+    "情報だけでまとめてください(上限に達したことを理由に、確認済みの情報まで捨てないこと)。"
+)
 
 
 def fact_check_article(content: str, log=DEFAULT_LOG) -> list:
@@ -1787,6 +1850,7 @@ def fact_check_article(content: str, log=DEFAULT_LOG) -> list:
 購入可能な場所・価格・発売時期など、具体的で検証可能な事実の記述を洗い出し、Web検索を使って
 実際に正しいか確認してください。
 
+{SEARCH_LIMIT_NOTE}
 確認した結果、誤り・古い情報・誇張の疑いがある箇所だけを指摘してください。問題がなければ
 issuesを空配列にしてください。裏付けが取れた正しい記述はissuesに含めないでください。
 
@@ -1806,7 +1870,7 @@ issuesを空配列にしてください。裏付けが取れた正しい記述�
 {content}
 """
     messages = [{"role": "user", "content": prompt}]
-    _, result = _call_claude(messages, tools=WEB_SEARCH_TOOL, max_tokens=4000)
+    _, result = _call_claude(messages, tools=WEB_SEARCH_TOOL, max_tokens=8000, effort="low")
     issues = result.get("issues", [])
     if issues:
         log(f"事実確認: {len(issues)}件の指摘がありました。")
@@ -1942,6 +2006,7 @@ def finalize_and_publish(
                     item for item in search_rakuten_items(amazon_keyword, hits=8)
                     if item["url"] not in used_item_urls
                 ][:3]
+                _add_display_names(items)
                 product_html = "\n".join(
                     build_rakuten_card_html(item, amazon_keyword=amazon_keyword) for item in items
                 )
